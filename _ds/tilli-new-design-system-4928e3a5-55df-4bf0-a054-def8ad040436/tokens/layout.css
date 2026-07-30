@@ -1,0 +1,42 @@
+/* Spacing, radii, borders, shadows and slide geometry */
+:root{
+  /* 8-based spacing, measured off the deck's 1920 canvas */
+  --tl-space-1:8px;
+  --tl-space-2:16px;
+  --tl-space-3:24px;
+  --tl-space-4:32px;
+  --tl-space-5:40px;
+  --tl-space-6:56px;
+  --tl-space-7:72px;
+  --tl-space-8:96px;
+  --tl-space-9:120px;          /* slide left margin */
+
+  --tl-radius-sm:8px;
+  --tl-radius-md:16px;
+  --tl-radius-lg:24px;         /* the standard card */
+  --tl-radius-xl:40px;         /* divider panels, big washes */
+  --tl-radius-pill:999px;
+
+  --tl-border-width:2px;       /* outlined cards */
+  --tl-border-width-strong:4px;/* phone frames, emphasis cards */
+
+  --tl-shadow-card:0 2px 10px rgba(20,20,20,.06);
+  --tl-shadow-raised:0 8px 28px rgba(20,20,20,.10);
+  --tl-shadow-none:none;
+
+  /* Slide geometry */
+  --tl-slide-w:1920px;
+  --tl-slide-h:1080px;
+  --tl-slide-margin-x:120px;
+  --tl-slide-margin-y:55px;
+  --tl-rail-width:19px;        /* content slides */
+  --tl-rail-width-cover:43px;  /* cover slide */
+
+  /* Motion — the deck is print-still; screens use short, soft moves */
+  --tl-ease:cubic-bezier(.2,.7,.3,1); /* @kind other */
+  --tl-duration-fast:120ms; /* @kind other */
+  --tl-duration:200ms; /* @kind other */
+  --tl-duration-slow:320ms; /* @kind other */
+  --tl-hover-lift:translateY(-4px); /* @kind other */
+  --tl-press-scale:scale(.98); /* @kind other */
+}

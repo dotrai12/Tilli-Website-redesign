@@ -1,0 +1,82 @@
+/* Tilli deck palette — hex values lifted verbatim from the 2026 Master Deck */
+:root{
+  /* ── Brand core: the four rail colours ───────────────────────────── */
+  --tl-green-500:#56C02B;      /* rail 1, eyebrow labels, divider slides */
+  --tl-green-400:#5FBF3F;      /* icon circles */
+  --tl-green-600:#348C11;      /* green text on white */
+  --tl-lime-400:#9BDE1D;       /* wash blocks, highlight marker */
+  --tl-pink-400:#E866B0;       /* rail 2 */
+  --tl-pink-600:#E91E8C;       /* magenta — stat numerals, icon circles */
+  --tl-pink-500:#DD3B96;
+  --tl-pink-300:#EB4A81;
+  --tl-yellow-500:#FCC30B;     /* rail 3, divider slides */
+  --tl-yellow-400:#FBBF1A;     /* icon circles */
+  --tl-yellow-300:#FAD202;
+  --tl-peach-300:#FFD699;
+  --tl-cyan-500:#26BDE2;       /* rail 4, section titles, assessment panels */
+  --tl-cyan-400:#2BB3E6;       /* icon circles */
+  --tl-cyan-300:#00C2FF;
+  --tl-cyan-700:#0F94B5;       /* cyan text on white */
+  --tl-orange-500:#F99B1C;     /* brush strokes, 4th accent */
+
+  /* ── Ink ─────────────────────────────────────────────────────────── */
+  --tl-ink-900:#141414;        /* headlines */
+  --tl-ink-800:#3D3D3D;
+  --tl-ink-700:#474747;        /* card titles */
+  --tl-ink-600:#545454;        /* dominant body colour */
+  --tl-ink-500:#656565;        /* secondary body */
+  --tl-ink-450:#5B6170;        /* stat labels (cool grey) */
+  --tl-ink-400:#737373;
+  --tl-ink-300:#8A91A0;        /* muted / meta */
+
+  /* ── Surfaces & lines ───────────────────────────────────────────── */
+  --tl-white:#FFFFFF;
+  --tl-surface-50:#FAFAFA;
+  --tl-surface-100:#F8F9FB;    /* stat strip background */
+  --tl-surface-150:#F5F5F5;
+  --tl-line-200:#ECEEF2;
+
+  /* ── Tint washes (card and section fills) ───────────────────────── */
+  --tl-wash-yellow:#FFF6A8;
+  --tl-wash-yellow-soft:#FFFDE9;
+  --tl-wash-cyan:#D9F5FF;
+  --tl-wash-green:#F1FFEC;
+  --tl-wash-pink:#FFF6FB;
+  --tl-wash-pink-strong:#FFDCF0;
+
+  /* ── Semantic aliases ───────────────────────────────────────────── */
+  --tl-text-heading:var(--tl-ink-900);
+  --tl-text-body:var(--tl-ink-600);
+  --tl-text-secondary:var(--tl-ink-500);
+  --tl-text-title:var(--tl-ink-700);
+  --tl-text-stat-label:var(--tl-ink-450);
+  --tl-text-muted:var(--tl-ink-300);
+  --tl-text-on-color:var(--tl-white);
+
+  --tl-surface-page:var(--tl-white);
+  --tl-surface-card:var(--tl-white);
+  --tl-surface-subtle:var(--tl-surface-100);
+  --tl-border-subtle:var(--tl-line-200);
+
+  --tl-accent-1:var(--tl-green-500);
+  --tl-accent-2:var(--tl-pink-600);
+  --tl-accent-3:var(--tl-cyan-500);
+  --tl-accent-4:var(--tl-yellow-500);
+  --tl-accent-5:var(--tl-orange-500);
+
+  /* rail: top → bottom order on every content slide */
+  --tl-rail-1:var(--tl-green-500);
+  --tl-rail-2:var(--tl-pink-400);
+  --tl-rail-3:var(--tl-cyan-500);
+  --tl-rail-4:var(--tl-yellow-500);
+
+  /* the four skill families named on the title slide */
+  --tl-skill-emotional-strength:var(--tl-green-600);
+  --tl-skill-focus-self-control:var(--tl-pink-500);
+  --tl-skill-resilience:var(--tl-cyan-700);
+  --tl-skill-independent-thinking:var(--tl-orange-500);
+
+  /* link colours (undefined links must never render browser blue) */
+  --tl-link:var(--tl-cyan-700);
+  --tl-link-hover:var(--tl-pink-600);
+}

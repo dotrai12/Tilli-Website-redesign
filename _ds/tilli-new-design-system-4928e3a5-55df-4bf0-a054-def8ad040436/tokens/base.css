@@ -1,0 +1,5 @@
+/* Minimal base: body type + link colours. No component styling lives here. */
+body{font-family:var(--tl-font-core);color:var(--tl-text-body);font-weight:var(--tl-weight-medium);line-height:var(--tl-leading-normal);text-wrap:pretty}
+a{color:var(--tl-link);text-decoration:none;font-weight:var(--tl-weight-semibold)}
+a:hover{color:var(--tl-link-hover);text-decoration:underline}
+strong,b{font-weight:var(--tl-weight-bold);color:var(--tl-text-title)}

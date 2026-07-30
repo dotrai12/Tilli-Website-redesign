@@ -1,0 +1,46 @@
+/* Type — Montserrat everywhere, Fredoka for the occasional playful accent.
+   px sizes are authored for the deck's 1920×1080 canvas (pt×1.333 from the source). */
+:root{
+  --tl-font-core:'Montserrat',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --tl-font-accent:'Fredoka','Montserrat',system-ui,sans-serif;
+
+  --tl-weight-light:300;
+  --tl-weight-regular:400;
+  --tl-weight-medium:500;
+  --tl-weight-semibold:600;
+  --tl-weight-bold:700;
+  --tl-weight-extrabold:800;
+  --tl-weight-heavy:900;
+
+  /* Deck scale (1920×1080) */
+  --tl-size-hero:185px;        /* cover title, tracking -11px */
+  --tl-size-display:96px;      /* full-bleed divider statements */
+  --tl-size-title:73px;        /* slide headline */
+  --tl-size-stat:68px;         /* oversized numerals */
+  --tl-size-section:54px;      /* MEASURE / ANALYZE / INTERVENE */
+  --tl-size-eyebrow:36px;      /* coloured kicker above a headline */
+  --tl-size-card-title:36px;
+  --tl-size-lead:31px;         /* deck body / lead paragraph */
+  --tl-size-body:27px;
+  --tl-size-small:25px;
+  --tl-size-caption:23px;
+  --tl-size-micro:21px;
+
+  /* UI scale (screens, docs, web) */
+  --tl-ui-h1:44px;
+  --tl-ui-h2:32px;
+  --tl-ui-h3:24px;
+  --tl-ui-body:17px;
+  --tl-ui-small:15px;
+  --tl-ui-micro:13px;
+
+  --tl-leading-tight:1.02;     /* hero + display */
+  --tl-leading-snug:1.15;      /* headlines */
+  --tl-leading-normal:1.35;    /* body */
+  --tl-leading-relaxed:1.5;    /* long paragraphs */
+
+  --tl-tracking-hero:-0.06em;
+  --tl-tracking-tight:-0.02em;
+  --tl-tracking-normal:0;
+  --tl-tracking-wide:0.04em;   /* small caps-ish award strips */
+}

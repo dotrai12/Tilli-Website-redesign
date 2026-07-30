@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tilli-site",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /tmp && exec ruby -e 'require \"webrick\"; WEBrick::HTTPServer.new(Port: 8742, DocumentRoot: \"/private/tmp/claude-501/-Users-dotrai-Desktop-Tilli-Tilli-Website-redesign/fdd39fe2-2b6d-4272-8336-cc8c70d0e8b3/scratchpad/site\").start'"],
+      "port": 8742
+    }
+  ]
+}
