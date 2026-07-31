@@ -55,7 +55,7 @@ const C = {
 };
 const DEPTH = 40;
 const CAM_DIST = 26;
-const N = 1500;
+const N = 400;
 
 let three = null;
 
@@ -63,15 +63,27 @@ function dotTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const g = c.getContext('2d');
+  /* solid disc with a ~2px feathered rim: just enough to antialias, no halo */
   const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   grd.addColorStop(0, 'rgba(255,255,255,1)');
-  grd.addColorStop(0.55, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.9, 'rgba(255,255,255,1)');
   grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd;
   g.fillRect(0, 0, 64, 64);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  /* mipmaps soften the sprite at typical on-screen sizes — sample the base level */
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   return tex;
+}
+
+/* half-extents of the camera frustum at a given world z — used so the dot
+   field always reaches the edges of the viewport, whatever the aspect */
+function visHalf(z) {
+  const h = (CAM_DIST - z) * Math.tan((50 * Math.PI / 180) / 2);
+  return { h, w: h * Math.max(0.65, window.innerWidth / Math.max(1, window.innerHeight)) };
 }
 function rng(seed) {
   let s = seed >>> 0;
@@ -82,6 +94,19 @@ function rng(seed) {
 }
 
 /* ── Formations: each station gets {pos, col} of length N*3 ───────── */
+/* hero scatter — recomputed on resize so it always fills the viewport */
+function spreadHero(pos) {
+  const r = rng(11);
+  for (let i = 0; i < N; i++) {
+    const z = -2 - r() * 7;
+    const v = visHalf(z);
+    /* 1.08 over-scan so dots bleed past the edges instead of stopping short */
+    pos[i * 3] = (r() - 0.5) * 2 * v.w * 1.08;
+    pos[i * 3 + 1] = (r() - 0.5) * 2 * v.h * 1.08;
+    pos[i * 3 + 2] = z;
+  }
+}
+
 function buildFormations() {
   const tmp = new THREE.Color();
   const white = new THREE.Color('#ffffff');
@@ -97,13 +122,8 @@ function buildFormations() {
   /* 0 · HERO — dots scattered everywhere around the question */
   const hero = make();
   {
-    const r = rng(11);
-    for (let i = 0; i < N; i++) {
-      let x = (r() - 0.5) * 40, y = (r() - 0.5) * 22;
-      if (Math.abs(x) < 8 && Math.abs(y) < 4) { x *= 2.4; y *= 2.6; } // keep the words readable
-      setP(hero, i, x, y, -2 - r() * 7);
-      setC(hero, i, MIX[i % 5]);
-    }
+    spreadHero(hero.pos);
+    for (let i = 0; i < N; i++) setC(hero, i, MIX[i % 5]);
     F.push(hero);
   }
   /* hero beat B target — a connected ring around the answer */
@@ -338,7 +358,7 @@ function initThree() {
     const r = rng(7);
     const c = new THREE.Color();
     for (let i = 0; i < M; i++) {
-      pos[i * 3] = (r() - 0.5) * 44;
+      pos[i * 3] = (r() - 0.5) * 44 * Math.max(1, (window.innerWidth / Math.max(1, window.innerHeight)) / 1.6);
       pos[i * 3 + 1] = (r() - 0.5) * 26;
       pos[i * 3 + 2] = 30 - r() * (scenes.length * DEPTH + 60);
       c.set(r() < 0.55 ? C.gray : [C.green, C.cyan, C.pink2, C.yellow, C.orange][Math.floor(r() * 5)]);
@@ -362,7 +382,7 @@ function initThree() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(CL, 3));
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.3, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.2, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
   pts.frustumCulled = false;
   scene3.add(pts);
 
@@ -393,6 +413,7 @@ function initThree() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    spreadHero(built.F[0].pos);
   });
 
   return {
@@ -486,6 +507,7 @@ function onScroll() {
   washEl.style.background = (w[0] === 255 && w[1] === 255 && w[2] === 255)
     ? '#fff'
     : `radial-gradient(1100px 700px at 50% 38%, rgb(${w[0]},${w[1]},${w[2]}), #ffffff 78%)`;
+  document.documentElement.style.setProperty('--glow-rgb', `${w[0]},${w[1]},${w[2]}`);
 
   curScene = t < 0.5 ? i : i + 1;
 

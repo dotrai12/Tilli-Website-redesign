@@ -39,6 +39,15 @@
 
   /* ── Hero: two beats stacked in the same spot ─────────────── */
   .hero-inner { position: relative; max-width: 1140px; width: 100%; margin: 0 auto; padding: 0 24px; text-align: center; display: grid; }
+  /* soft scrim so the headline stays readable over the dot field; colour
+     follows the scene wash (--glow-rgb, set in main.js) */
+  .hero-glow { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1280px, 104vw); height: min(660px, 82vh); pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      rgba(var(--glow-rgb, 255,255,255), 0.97) 0%,
+      rgba(var(--glow-rgb, 255,255,255), 0.93) 30%,
+      rgba(var(--glow-rgb, 255,255,255), 0.72) 52%,
+      rgba(var(--glow-rgb, 255,255,255), 0.32) 70%,
+      rgba(var(--glow-rgb, 255,255,255), 0) 85%); }
   .hero-beat { grid-area: 1 / 1; align-self: center; will-change: transform, opacity; }
   .hero-beat [data-hb] { position: relative; opacity: 0; transform: translateY(26px); transition: opacity .9s ease, transform .9s cubic-bezier(.2,.7,.3,1); }
   .hero-beat [data-hb].in { opacity: 1; transform: translateY(0); }
@@ -119,6 +128,7 @@
 <div class="pin-track" data-pin-track style="height: 260vh;">
 <header class="pin-view">
   <div class="hero-inner">
+    <div class="hero-glow"></div>
     <div class="hero-beat" id="beatA">
       <div data-hb class="eyebrow">MEASURE · ANALYZE · INTERVENE</div>
       <h1 data-hb>How do schools make a <span style="color: var(--tl-pink-600);">decision</span> for their students?</h1>
@@ -496,6 +506,6 @@
 
 </div><!-- /content -->
 
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=3"></script>
 </body>
 </html>
