@@ -162,6 +162,33 @@ function spreadHero(pos) {
   }
 }
 
+/* Hero beat B: 13 anchor dots pinned to a clean rim with the rest of the
+   field loosened into a wide, airy halo behind them. Sized off the camera
+   frustum (and re-run on resize, like the scatter) so the rim always lands
+   out near the edge of the frame — clear of the copy, and clear of the
+   `.hero-glow` scrim that would otherwise wash the connections out. */
+const HERO_NODES = 13;
+const heroNodeIdx = new Int32Array(HERO_NODES);
+for (let k = 0; k < HERO_NODES; k++) heroNodeIdx[k] = Math.round((k * N) / HERO_NODES) % N;
+function layoutHeroRing(ring) {
+  const v = visHalf(-3);
+  const rx = Math.min(v.w * 0.86, 21), ry = v.h * 0.8;
+  const r = rng(12);
+  const isNode = new Uint8Array(N);
+  for (let k = 0; k < HERO_NODES; k++) isNode[heroNodeIdx[k]] = 1;
+  for (let i = 0; i < N; i++) {
+    const jit = r(), spread = r(), depth = r();
+    const rim = isNode[i] === 1;
+    /* anchors sit exactly on the rim so the network reads as one shape;
+       everyone else drifts in angle and across a broad, sparse annulus */
+    const ang = (i / N) * Math.PI * 2 + (rim ? 0 : (jit - 0.5) * 0.55);
+    const rad = rim ? 1 : 0.72 + spread * 0.5;
+    ring[i * 3] = Math.cos(ang) * rx * rad;
+    ring[i * 3 + 1] = Math.sin(ang) * ry * rad;
+    ring[i * 3 + 2] = rim ? -3 : -2 - depth * 5;
+  }
+}
+
 function buildFormations() {
   const tmp = new THREE.Color();
   const white = new THREE.Color('#ffffff');
@@ -181,17 +208,17 @@ function buildFormations() {
     for (let i = 0; i < N; i++) setC(hero, i, MIX[i % 5]);
     F.push(hero);
   }
-  /* hero beat B target — a connected ring around the answer */
+  /* hero beat B target — see layoutHeroRing() */
   const heroRing = new Float32Array(N * 3);
-  {
-    const r = rng(12);
-    for (let i = 0; i < N; i++) {
-      const ang = (i / N) * Math.PI * 2 + r() * 0.2;
-      const rad = 1 + (r() - 0.5) * 0.16;
-      heroRing[i * 3] = Math.cos(ang) * 15.5 * rad;
-      heroRing[i * 3 + 1] = Math.sin(ang) * 8.6 * rad;
-      heroRing[i * 3 + 2] = -2 - r() * 4;
-    }
+  layoutHeroRing(heroRing);
+  /* who is wired to whom: every anchor to its neighbour all the way round,
+     plus a second hop off every other anchor so the busier nodes carry
+     three or four threads. Both hops are short chords of the ellipse, so
+     no thread ever comes closer than 0.88 of the rim to the copy. */
+  const heroLinks = [];
+  for (let k = 0; k < HERO_NODES; k++) {
+    heroLinks.push([k, (k + 1) % HERO_NODES]);
+    if (k % 2 === 0) heroLinks.push([k, (k + 2) % HERO_NODES]);
   }
 
   /* 1 · DASHBOARD — a stream: in from top-right, through the card,
@@ -384,7 +411,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, dnaThresh, streamT, streamJit, streamPoint };
+  return { F, heroRing, heroLinks, dnaThresh, streamT, streamJit, streamPoint };
 }
 
 function initThree() {
@@ -441,23 +468,74 @@ function initThree() {
   pts.frustumCulled = false;
   scene3.add(pts);
 
-  /* hero connection lines: a loose thread through the ring dots */
-  const LINE_NODES = 26;
-  const linePos = new Float32Array(LINE_NODES * 2 * 3);
-  {
-    const step = Math.floor(N / LINE_NODES);
-    for (let k = 0; k < LINE_NODES; k++) {
-      const a = (k * step) % N, b = ((k + 1) * step) % N;
-      linePos.set(built.heroRing.subarray(a * 3, a * 3 + 3), k * 6);
-      linePos.set(built.heroRing.subarray(b * 3, b * 3 + 3), k * 6 + 3);
+  /* hero connections. WebGL ignores LineBasicMaterial.linewidth on every
+     desktop driver, so a real stroke has to be geometry: each link is a
+     thin quad in the ring's plane, rebuilt each frame so the thread can be
+     animated growing out from one anchor towards the next. */
+  const LINK_HALF_W = 0.105;
+  const linkPos = new Float32Array(built.heroLinks.length * 6 * 3);
+  const linkGeo = new THREE.BufferGeometry();
+  linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
+  linkGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
+  const links = new THREE.Mesh(linkGeo, new THREE.MeshBasicMaterial({
+    color: 0x2E3542, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+  }));
+  links.frustumCulled = false;
+  links.renderOrder = 1;
+  scene3.add(links);
+
+  /* the anchors themselves, drawn over the field at twice its dot size */
+  const nodePos = new Float32Array(HERO_NODES * 3);
+  const nodeCol = new Float32Array(HERO_NODES * 3);
+  const syncNodes = () => {
+    for (let k = 0; k < HERO_NODES; k++) {
+      const idx = heroNodeIdx[k];
+      nodePos.set(built.heroRing.subarray(idx * 3, idx * 3 + 3), k * 3);
     }
+  };
+  {
+    const c = new THREE.Color();
+    const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
+    for (let k = 0; k < HERO_NODES; k++) {
+      c.set(MIX[k % 5]);
+      nodeCol[k * 3] = c.r; nodeCol[k * 3 + 1] = c.g; nodeCol[k * 3 + 2] = c.b;
+    }
+    syncNodes();
   }
-  const lineGeo = new THREE.BufferGeometry();
-  lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
-  lineGeo.setDrawRange(0, 0);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0xc9cfda, transparent: true, opacity: 0.7 });
-  const lines = new THREE.LineSegments(lineGeo, lineMat);
-  scene3.add(lines);
+  const nodeGeo = new THREE.BufferGeometry();
+  nodeGeo.setAttribute('position', new THREE.BufferAttribute(nodePos, 3));
+  nodeGeo.setAttribute('color', new THREE.BufferAttribute(nodeCol, 3));
+  const nodes = new THREE.Points(nodeGeo, new THREE.PointsMaterial({
+    size: 3, map: tex, vertexColors: true, transparent: true, opacity: 0, depthWrite: false,
+  }));
+  nodes.frustumCulled = false;
+  nodes.renderOrder = 2;
+  scene3.add(nodes);
+
+  /* lay the link quads out for a given draw progress (0 = nothing yet,
+     1 = every thread closed). Links light up in rim order with a short
+     overlap, so you watch the web stitch itself together. */
+  const OVERLAP = 2.4;
+  function drawLinks(beat) {
+    const L = built.heroLinks, R = built.heroRing, NI = heroNodeIdx;
+    for (let k = 0; k < L.length; k++) {
+      const t = ease(clamp((beat * (L.length + OVERLAP) - k) / OVERLAP));
+      const o = k * 18;
+      if (t <= 0) { linkPos.fill(0, o, o + 18); continue; }
+      const a = NI[L[k][0]] * 3, b = NI[L[k][1]] * 3;
+      const ax = R[a], ay = R[a + 1], az = R[a + 2];
+      const tx = lerp(ax, R[b], t), ty = lerp(ay, R[b + 1], t), tz = lerp(az, R[b + 2], t);
+      let nx = -(ty - ay), ny = tx - ax;
+      const len = Math.hypot(nx, ny) || 1;
+      nx = (nx / len) * LINK_HALF_W; ny = (ny / len) * LINK_HALF_W;
+      const v = [
+        ax + nx, ay + ny, az, ax - nx, ay - ny, az, tx - nx, ty - ny, tz,
+        ax + nx, ay + ny, az, tx - nx, ty - ny, tz, tx + nx, ty + ny, tz,
+      ];
+      linkPos.set(v, o);
+    }
+    linkGeo.attributes.position.needsUpdate = true;
+  }
 
   const mouse = { x: 0, y: 0, tx: 0, ty: 0 };
   window.addEventListener('pointermove', (e) => {
@@ -469,11 +547,14 @@ function initThree() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     spreadHero(built.F[0].pos);
+    layoutHeroRing(built.heroRing);
+    syncNodes();
+    nodeGeo.attributes.position.needsUpdate = true;
   });
 
   return {
     renderer, scene3, camera, geo, P, CL, phases, ...built,
-    lines, lineGeo, nLineSegs: LINE_NODES,
+    links, nodes, drawLinks,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -774,7 +855,7 @@ if (reduced) {
     }
 
     /* HERO: beat B pulls the scattered dots into the connected ring */
-    const heroBeat = ease(clamp((th.heroP - 0.3) / 0.3));
+    const heroBeat = ease(clamp((th.heroP - 0.28) / 0.24));
     if (i === 0 && heroBeat > 0) {
       const wgt = heroBeat * (1 - tt);
       for (let k = 0; k < N * 3; k += 3) {
@@ -783,10 +864,16 @@ if (reduced) {
         P[k + 2] += (th.heroRing[k + 2] - A.pos[k + 2]) * wgt;
       }
     }
-    const lineBeat = clamp((th.heroP - 0.45) / 0.25) * (1 - clamp((f - 0.72) / 0.18));
-    th.lineGeo.setDrawRange(0, Math.floor(ease(clamp(lineBeat)) * th.nLineSegs) * 2);
-    th.lines.position.z = planeZ;
-    th.lines.material.opacity = 0.7 * clamp(1 - (f - 0.72) / 0.18);
+    /* the anchors land as the ring settles, then the threads are drawn one
+       after another so you watch the interconnections being made; the whole
+       web leaves with the scene */
+    const heroOut = clamp(1 - (f - 0.78) / 0.13);
+    const nodeFade = ease(clamp((th.heroP - 0.44) / 0.10)) * heroOut;
+    th.nodes.position.z = planeZ;
+    th.nodes.material.opacity = nodeFade;
+    th.links.position.z = planeZ;
+    th.links.material.opacity = heroOut;
+    if (heroOut > 0) th.drawLinks(clamp((th.heroP - 0.50) / 0.24));
 
     /* DASHBOARD: the stream actually flows */
     {
