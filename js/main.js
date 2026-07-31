@@ -1,10 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Tilli — one seamless experience.
-   A single persistent Three.js world flies the camera through ten
-   "stations". The same particle field travels with the visitor and
-   morphs: constellation halo → data grid → report arc → two minds →
-   DNA helix → skill helix → target rings → celebration → journey
-   path → heart. Nothing ever unmounts; sections never "end".
+   Tilli — one seamless experience, told by the dots.
+   The same particles narrate the whole page, following the sketch
+   storyboard:
+     scattered question → dots connect around the answer → data flows
+     through the dashboard → funnels into report cards (+ a heart) →
+     spirals into one rotating circle → divides into the 3 views
+     (teacher / student / parent) → weaves a DNA of dots, strand by
+     strand → the DNA rotates for the 360° view → zooms aside for the
+     12 skills → the dots become children, developmentally on track →
+     (ask · impact · journey) → every data point ends in one heart.
    ═══════════════════════════════════════════════════════════════════ */
 import * as THREE from '../lib/three.module.min.js';
 
@@ -15,7 +19,7 @@ const smooth = (t) => t * t * (3 - 2 * t);
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* ── Scene registry (DOM) ─────────────────────────────────────────── */
+/* ── Scene registry (DOM order = station order) ───────────────────── */
 const sceneEls = Array.from(document.querySelectorAll('[data-scene]'));
 const scenes = sceneEls.map((el) => ({
   el,
@@ -25,8 +29,9 @@ const scenes = sceneEls.map((el) => ({
   track: el.querySelector('[data-pin-track]'),
   t: null,
 }));
+const ST = {}; // name → station index
+scenes.forEach((s, i) => { ST[s.label] = i; });
 
-/* f = fractional station index (0 … scenes.length-1), from scroll */
 function stationF() {
   const y = window.scrollY + window.innerHeight / 2;
   const mids = scenes.map((s) => s.el.offsetTop + s.el.offsetHeight / 2);
@@ -36,8 +41,6 @@ function stationF() {
   while (i < mids.length - 1 && y > mids[i + 1]) i++;
   return i + clamp((y - mids[i]) / Math.max(1, mids[i + 1] - mids[i]));
 }
-
-/* progress 0→1 of a pinned element through the viewport */
 function localP(el, vh) {
   const r = el.getBoundingClientRect();
   return clamp(-r.top / Math.max(1, r.height - vh));
@@ -46,12 +49,15 @@ function localP(el, vh) {
 /* ═══════════════════════════════════════════════════════════════════
    THREE.JS WORLD
    ═══════════════════════════════════════════════════════════════════ */
-const PALETTE = ['#56C02B', '#26BDE2', '#E91E8C', '#FCC30B', '#F99B1C'];
-const DEPTH = 40;          // world units between stations
-const CAM_DIST = 26;       // camera distance to the active formation plane
-const N = 1500;            // morph-field particles
+const C = {
+  green: '#56C02B', cyan: '#26BDE2', pink: '#E91E8C', yellow: '#FCC30B',
+  orange: '#F99B1C', pink2: '#E866B0', gray: '#C9CFDA', greenD: '#348C11',
+};
+const DEPTH = 40;
+const CAM_DIST = 26;
+const N = 1500;
 
-let three = null;          // holds all 3D state; null when unavailable
+let three = null;
 
 function dotTexture() {
   const c = document.createElement('canvas');
@@ -67,8 +73,6 @@ function dotTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
-
-/* deterministic pseudo-random, so formations are stable frame to frame */
 function rng(seed) {
   let s = seed >>> 0;
   return () => {
@@ -77,133 +81,235 @@ function rng(seed) {
   };
 }
 
-/* ── Formation builders: each returns Float32Array(N*3), local coords.
-     Visible extent at CAM_DIST ≈ 24 units tall / 24·aspect wide. ──── */
+/* ── Formations: each station gets {pos, col} of length N*3 ───────── */
 function buildFormations() {
+  const tmp = new THREE.Color();
+  const white = new THREE.Color('#ffffff');
   const F = [];
-  const mk = () => new Float32Array(N * 3);
+  const make = () => ({ pos: new Float32Array(N * 3), col: new Float32Array(N * 3) });
+  const setC = (f, i, hex, soften = 0.1) => {
+    tmp.set(hex).lerp(white, soften);
+    f.col[i * 3] = tmp.r; f.col[i * 3 + 1] = tmp.g; f.col[i * 3 + 2] = tmp.b;
+  };
+  const setP = (f, i, x, y, z) => { f.pos[i * 3] = x; f.pos[i * 3 + 1] = y; f.pos[i * 3 + 2] = z; };
+  const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
 
-  // 0 · HERO — wide halo ring around the headline (centre kept clear)
+  /* 0 · HERO — dots scattered everywhere around the question */
+  const hero = make();
   {
-    const a = mk(); const r = rng(11);
+    const r = rng(11);
     for (let i = 0; i < N; i++) {
-      const ang = r() * Math.PI * 2;
-      const rad = 10.5 + r() * 5.5;
-      a[i * 3] = Math.cos(ang) * rad * 1.35;
-      a[i * 3 + 1] = Math.sin(ang) * rad * 0.62;
-      a[i * 3 + 2] = -2 - r() * 6;
+      let x = (r() - 0.5) * 40, y = (r() - 0.5) * 22;
+      if (Math.abs(x) < 8 && Math.abs(y) < 4) { x *= 2.4; y *= 2.6; } // keep the words readable
+      setP(hero, i, x, y, -2 - r() * 7);
+      setC(hero, i, MIX[i % 5]);
     }
-    F.push(a);
+    F.push(hero);
   }
-  // 1 · DASHBOARD — orderly data grid streaming behind the video card
+  /* hero beat B target — a connected ring around the answer */
+  const heroRing = new Float32Array(N * 3);
   {
-    const a = mk(); const r = rng(22);
-    const cols = 50, rows = Math.ceil(N / cols);
+    const r = rng(12);
     for (let i = 0; i < N; i++) {
-      const cx = i % cols, cy = Math.floor(i / cols);
-      a[i * 3] = (cx / (cols - 1) - 0.5) * 30;
-      a[i * 3 + 1] = (cy / (rows - 1) - 0.5) * 17;
-      a[i * 3 + 2] = -4 - r() * 3 + Math.sin(cx * 0.5) * 0.8;
+      const ang = (i / N) * Math.PI * 2 + r() * 0.2;
+      const rad = 1 + (r() - 0.5) * 0.16;
+      heroRing[i * 3] = Math.cos(ang) * 15.5 * rad;
+      heroRing[i * 3 + 1] = Math.sin(ang) * 8.6 * rad;
+      heroRing[i * 3 + 2] = -2 - r() * 4;
     }
-    F.push(a);
   }
-  // 2 · REPORTS — a soft arc fanning over the report pages
+
+  /* 1 · DASHBOARD — a stream: in from top-right, through the card,
+       out at bottom-left (flow animated in the frame loop) */
+  const streamPath = [[19, 12, -6], [8, 5, -5], [0, 0, -6.5], [-5, -6, -5], [-19, -12, -6]];
+  const streamT = new Float32Array(N);
+  const streamJit = new Float32Array(N * 3);
+  const streamPoint = (t, j3, out) => {
+    const seg = Math.min(Math.floor(t * 4), 3), tt = t * 4 - seg;
+    const a = streamPath[seg], b = streamPath[seg + 1];
+    out[0] = lerp(a[0], b[0], tt) + streamJit[j3];
+    out[1] = lerp(a[1], b[1], tt) + streamJit[j3 + 1];
+    out[2] = lerp(a[2], b[2], tt) + streamJit[j3 + 2];
+  };
   {
-    const a = mk(); const r = rng(33);
+    const dash = make();
+    const r = rng(22);
+    const p = [0, 0, 0];
     for (let i = 0; i < N; i++) {
-      const t = i / N;
-      const ang = Math.PI * (0.08 + t * 0.84); // arc left→right over the top
-      const rad = 11 + r() * 4;
-      a[i * 3] = Math.cos(ang) * rad * 1.5;
-      a[i * 3 + 1] = Math.sin(ang) * rad * 0.85 - 3.5;
-      a[i * 3 + 2] = -3 - r() * 5;
+      streamT[i] = r();
+      streamJit[i * 3] = (r() - 0.5) * 3.4;
+      streamJit[i * 3 + 1] = (r() - 0.5) * 2.6;
+      streamJit[i * 3 + 2] = (r() - 0.5) * 2;
+      streamPoint(streamT[i], i * 3, p);
+      setP(dash, i, p[0], p[1], p[2]);
+      setC(dash, i, MIX[i % 5]);
     }
-    F.push(a);
+    F.push(dash);
   }
-  // 3 · ASK-TILLI — chaos on the left, ordered orbits on the right
+
+  /* 2 · REPORTS — funnel pouring into the cards + a heart at right */
   {
-    const a = mk(); const r = rng(44);
+    const fan = make();
+    const r = rng(33);
     for (let i = 0; i < N; i++) {
-      if (i % 2 === 0) { // loose noise cloud (generic AI)
-        a[i * 3] = -9 + (r() - 0.5) * 9;
-        a[i * 3 + 1] = (r() - 0.5) * 12;
-        a[i * 3 + 2] = -3 - r() * 6;
-      } else {           // concentric rings (Tilli knows the child)
-        const ring = i % 6 < 2 ? 2.2 : i % 6 < 4 ? 3.8 : 5.4;
-        const ang = r() * Math.PI * 2;
-        a[i * 3] = 9 + Math.cos(ang) * ring;
-        a[i * 3 + 1] = Math.sin(ang) * ring * 0.9;
-        a[i * 3 + 2] = -3 - r() * 2;
+      if (i % 4 === 3) { // the heart — "loved by parents"
+        const t = (i / N) * Math.PI * 2 * 4.1;
+        const s = 0.17 * (0.82 + r() * 0.3);
+        setP(fan, i,
+          10.5 + 16 * Math.pow(Math.sin(t), 3) * s,
+          -2.5 + (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * s,
+          -3 - r() * 2);
+        setC(fan, i, i % 8 === 3 ? C.pink : C.pink2, 0.05);
+      } else { // the funnel from above
+        const t = r();
+        const spread = lerp(9, 2.2, t);
+        setP(fan, i, (r() - 0.5) * spread * 2 - 1, lerp(12.5, 2.5, t) + (r() - 0.5) * 1.4, -4 - r() * 3);
+        setC(fan, i, MIX[i % 5]);
       }
     }
-    F.push(a);
+    F.push(fan);
   }
-  // 4 · MEASURE — the DNA double helix (particles hug the two strands)
-  // 5 · SKILLS  — same helix, quarter-turn on (a seamless continuation)
-  for (const phase of [0, Math.PI * 0.5]) {
-    const a = mk(); const r = rng(55 + phase * 10);
+
+  /* 3 · COLLECT — the data spirals into one rotating circle */
+  {
+    const sp = make();
+    const r = rng(44);
     for (let i = 0; i < N; i++) {
       const t = i / N;
-      const y = (t - 0.5) * 21;
-      const strand = i % 2;
-      const ang = y * 0.62 + phase + (strand ? Math.PI : 0);
-      const jitter = () => (r() - 0.5) * 0.55;
-      a[i * 3] = Math.sin(ang) * 3.3 + jitter();
-      a[i * 3 + 1] = y + jitter();
-      a[i * 3 + 2] = Math.cos(ang) * 3.3 - 3 + jitter();
+      const ang = t * Math.PI * 7 + r() * 0.35;
+      const rad = 1.2 + t * 9.6 + (r() - 0.5) * 0.9;
+      setP(sp, i, Math.cos(ang) * rad * 1.15, Math.sin(ang) * rad * 0.92, -3 - r() * 3);
+      setC(sp, i, MIX[i % 5]);
     }
-    F.push(a);
+    F.push(sp);
   }
-  // 6 · ON TRACK — calm concentric target rings behind the promise
+
+  /* 4 · 3 VIEWS — the circle divides into three coloured balls */
   {
-    const a = mk(); const r = rng(66);
+    const v = make();
+    const r = rng(55);
+    const centers = [[-9, 0.8], [0, 0.8], [9, 0.8]];
+    const colors = [C.green, C.yellow, C.cyan];
     for (let i = 0; i < N; i++) {
-      const ring = [6, 8.6, 11.4][i % 3];
+      const k = i % 3;
       const ang = r() * Math.PI * 2;
-      a[i * 3] = Math.cos(ang) * ring * 1.45;
-      a[i * 3 + 1] = Math.sin(ang) * ring * 0.72;
-      a[i * 3 + 2] = -4 - r() * 3;
+      const rad = Math.sqrt(r()) * 3.4;
+      setP(v, i, centers[k][0] + Math.cos(ang) * rad, centers[k][1] + Math.sin(ang) * rad * 0.95, -3 - r() * 2.5);
+      setC(v, i, colors[k], 0.06);
     }
-    F.push(a);
+    F.push(v);
   }
-  // 7 · IMPACT — celebration: a loose confetti sphere
+
+  /* 5 · MEASURE — a DNA of dots: green strand, cyan strand, orange
+       rungs. dnaThresh[i] = when (in section progress) dot appears */
+  const dnaThresh = new Float32Array(N);
+  const helixDots = (f, cx, scale, seed) => {
+    const r = rng(seed);
+    const R = 3.4 * scale, H = 21 * scale, TW = 0.62 / scale;
+    for (let i = 0; i < N; i++) {
+      const role = i % 3, t = ((i - role) / 3) / (N / 3); // 0..1 along strand
+      const j = () => (r() - 0.5) * 0.5 * scale;
+      if (role < 2) { // strands
+        const y = (0.5 - t) * H;
+        const ang = y * TW + (role ? Math.PI : 0);
+        setP(f, i, cx + Math.sin(ang) * R + j(), y + j(), Math.cos(ang) * R - 3 + j());
+        setC(f, i, role ? C.cyan : C.green, 0.05);
+        dnaThresh[i] = role === 0 ? t * 0.3 : 0.3 + t * 0.3;
+      } else { // rungs: 14 dotted bars
+        const rungCount = 14;
+        const k = Math.floor(t * rungCount), rt = (t * rungCount) % 1;
+        const y = (0.5 - (k + 0.5) / rungCount) * (H * 0.94);
+        const ang = y * TW;
+        const ax = cx + Math.sin(ang) * R, az = Math.cos(ang) * R - 3;
+        const bx = cx + Math.sin(ang + Math.PI) * R, bz = Math.cos(ang + Math.PI) * R - 3;
+        setP(f, i, lerp(ax, bx, rt) + j() * 0.5, y + j() * 0.5, lerp(az, bz, rt) + j() * 0.5);
+        setC(f, i, C.orange, 0.05);
+        dnaThresh[i] = 0.62 + (k / rungCount) * 0.3;
+      }
+    }
+  };
+  { const dna = make(); helixDots(dna, 0, 1, 66); F.push(dna); }
+
+  /* 6 · 12 SKILLS — the same DNA, zoomed out to the right */
+  { const dna2 = make(); helixDots(dna2, 7.2, 0.72, 66); F.push(dna2); }
+
+  /* 7 · ON TRACK — the dots arrange themselves into children */
   {
-    const a = mk(); const r = rng(77);
+    const kids = make();
+    const r = rng(77);
+    const centers = [-9.5, 0, 9.5];
+    const KIDMIX = [C.green, C.cyan, C.yellow];
+    for (let i = 0; i < N; i++) {
+      const k = i % 3;
+      const t = r() * Math.PI * 2;
+      // five-limbed star-child: head, two arms, two legs
+      const rad = 4.6 * (0.68 + 0.32 * Math.cos(5 * (t + Math.PI / 2))) + (r() - 0.5) * 0.5;
+      setP(kids, i, centers[k] + Math.cos(t) * rad * 0.95, Math.sin(t) * rad - 1.2, -3 - r() * 2);
+      setC(kids, i, KIDMIX[(i + k) % 3], 0.06);
+    }
+    F.push(kids);
+  }
+
+  /* 8 · ASK-TILLI — generic noise on the left, Tilli's orbits right */
+  {
+    const ai = make();
+    const r = rng(88);
+    for (let i = 0; i < N; i++) {
+      if (i % 2 === 0) {
+        setP(ai, i, -9 + (r() - 0.5) * 9, (r() - 0.5) * 12, -3 - r() * 6);
+        setC(ai, i, C.gray, 0.15);
+      } else {
+        const ring = i % 6 < 2 ? 2.2 : i % 6 < 4 ? 3.8 : 5.4;
+        const ang = r() * Math.PI * 2;
+        setP(ai, i, 9 + Math.cos(ang) * ring, Math.sin(ang) * ring * 0.9, -3 - r() * 2);
+        setC(ai, i, [C.cyan, C.green, C.yellow][i % 3], 0.06);
+      }
+    }
+    F.push(ai);
+  }
+
+  /* 9 · IMPACT — celebration confetti */
+  {
+    const im = make();
+    const r = rng(99);
     for (let i = 0; i < N; i++) {
       const u = r() * 2 - 1, ang = r() * Math.PI * 2;
-      const rad = 8.5 + r() * 6;
-      const s = Math.sqrt(1 - u * u);
-      a[i * 3] = Math.cos(ang) * s * rad * 1.4;
-      a[i * 3 + 1] = u * rad * 0.8;
-      a[i * 3 + 2] = Math.sin(ang) * s * rad - 6;
+      const rad = 8.5 + r() * 6, s = Math.sqrt(1 - u * u);
+      setP(im, i, Math.cos(ang) * s * rad * 1.4, u * rad * 0.8, Math.sin(ang) * s * rad - 6);
+      setC(im, i, [C.green, C.cyan, C.pink, C.yellow, C.orange][i % 5], 0.04);
     }
-    F.push(a);
+    F.push(im);
   }
-  // 8 · JOURNEY — a winding dotted path, echoing the SVG trail
+
+  /* 10 · JOURNEY — a winding dotted path */
   {
-    const a = mk(); const r = rng(88);
+    const j = make();
+    const r = rng(111);
     for (let i = 0; i < N; i++) {
       const t = i / N;
       const y = (0.5 - t) * 22;
-      a[i * 3] = Math.sin(y * 0.42) * 6.5 - 6 + (r() - 0.5) * 1.6;
-      a[i * 3 + 1] = y + (r() - 0.5) * 1.2;
-      a[i * 3 + 2] = -4 - r() * 3;
+      setP(j, i, Math.sin(y * 0.42) * 6.5 - 6 + (r() - 0.5) * 1.6, y + (r() - 0.5) * 1.2, -4 - r() * 3);
+      setC(j, i, MIX[i % 5]);
     }
-    F.push(a);
+    F.push(j);
   }
-  // 9 · LET'S TALK — every data point becomes one heart
+
+  /* 11 · LET'S TALK — every data point becomes one heart */
   {
-    const a = mk(); const r = rng(99);
+    const h = make();
+    const r = rng(122);
     for (let i = 0; i < N; i++) {
       const t = (i / N) * Math.PI * 2;
-      const s = 0.52 * (0.75 + r() * 0.3);
-      a[i * 3] = 16 * Math.pow(Math.sin(t), 3) * s;
-      a[i * 3 + 1] = (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * s + 1;
-      a[i * 3 + 2] = -3 - r() * 3;
+      const s = 0.55 * (0.78 + r() * 0.28);
+      setP(h, i, 16 * Math.pow(Math.sin(t), 3) * s,
+        (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * s + 1,
+        -3 - r() * 3);
+      setC(h, i, i % 7 === 0 ? C.yellow : i % 2 ? C.pink : C.pink2, 0.05);
     }
-    F.push(a);
+    F.push(h);
   }
-  return F;
+
+  return { F, heroRing, dnaThresh, streamT, streamJit, streamPoint };
 }
 
 function initThree() {
@@ -220,16 +326,13 @@ function initThree() {
 
   const scene3 = new THREE.Scene();
   scene3.fog = new THREE.Fog(0xffffff, CAM_DIST + 8, CAM_DIST + 46);
-
   const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 400);
   camera.position.set(0, 0, CAM_DIST);
-
   const tex = dotTexture();
 
-  /* ── ambient dust: fixed in the world along the whole flight path.
-       This is what makes the camera's travel *felt*. ──────────────── */
+  /* ambient dust — fixed in the world, makes the flight felt */
   {
-    const M = 800;
+    const M = 420;
     const pos = new Float32Array(M * 3);
     const col = new Float32Array(M * 3);
     const r = rng(7);
@@ -238,120 +341,54 @@ function initThree() {
       pos[i * 3] = (r() - 0.5) * 44;
       pos[i * 3 + 1] = (r() - 0.5) * 26;
       pos[i * 3 + 2] = 30 - r() * (scenes.length * DEPTH + 60);
-      c.set(r() < 0.55 ? '#C9CFDA' : PALETTE[Math.floor(r() * 5)]);
+      c.set(r() < 0.55 ? C.gray : [C.green, C.cyan, C.pink2, C.yellow, C.orange][Math.floor(r() * 5)]);
       col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const m = new THREE.PointsMaterial({ size: 0.16, map: tex, vertexColors: true, transparent: true, opacity: 0.5, depthWrite: false, sizeAttenuation: true });
-    scene3.add(new THREE.Points(g, m));
+    scene3.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 0.14, map: tex, vertexColors: true, transparent: true, opacity: 0.35, depthWrite: false })));
   }
 
-  /* ── the morph field: N particles, screen-anchored, formation-lerped */
-  const formations = buildFormations();
-  const morphPos = new Float32Array(N * 3);
-  morphPos.set(formations[0]);
-  const morphCol = new Float32Array(N * 3);
+  /* the storytelling field */
+  const built = buildFormations();
+  const P = new Float32Array(N * 3); P.set(built.F[0].pos);
+  const CL = new Float32Array(N * 3); CL.set(built.F[0].col);
   const phases = new Float32Array(N * 3);
   {
     const r = rng(5);
-    const c = new THREE.Color();
-    for (let i = 0; i < N; i++) {
-      c.set(PALETTE[i % 5]);
-      // soften: blend toward white a touch so text stays readable
-      c.lerp(new THREE.Color('#ffffff'), 0.12);
-      morphCol[i * 3] = c.r; morphCol[i * 3 + 1] = c.g; morphCol[i * 3 + 2] = c.b;
-      phases[i * 3] = r() * Math.PI * 2;
-      phases[i * 3 + 1] = r() * Math.PI * 2;
-      phases[i * 3 + 2] = r() * Math.PI * 2;
+    for (let k = 0; k < N * 3; k++) phases[k] = r() * Math.PI * 2;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(CL, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.3, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
+  pts.frustumCulled = false;
+  scene3.add(pts);
+
+  /* hero connection lines: a loose thread through the ring dots */
+  const LINE_NODES = 26;
+  const linePos = new Float32Array(LINE_NODES * 2 * 3);
+  {
+    const step = Math.floor(N / LINE_NODES);
+    for (let k = 0; k < LINE_NODES; k++) {
+      const a = (k * step) % N, b = ((k + 1) * step) % N;
+      linePos.set(built.heroRing.subarray(a * 3, a * 3 + 3), k * 6);
+      linePos.set(built.heroRing.subarray(b * 3, b * 3 + 3), k * 6 + 3);
     }
   }
-  const morphGeo = new THREE.BufferGeometry();
-  morphGeo.setAttribute('position', new THREE.BufferAttribute(morphPos, 3));
-  morphGeo.setAttribute('color', new THREE.BufferAttribute(morphCol, 3));
-  const morphMat = new THREE.PointsMaterial({ size: 0.26, map: tex, vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, sizeAttenuation: true });
-  const morphPts = new THREE.Points(morphGeo, morphMat);
-  morphPts.frustumCulled = false;
-  scene3.add(morphPts);
-
-  /* ── hero constellation: real spheres + connection lines, world-fixed
-       at station 0 so it recedes behind you as the flight begins. ─── */
-  const NODES = [
-    [120, 150, '#56C02B', 15], [570, 70, '#FCC30B', 15], [1020, 130, '#26BDE2', 15],
-    [180, 470, '#E91E8C', 15], [960, 440, '#F99B1C', 15], [570, 530, '#56C02B', 15],
-    [330, 105, '#26BDE2', 11], [820, 95, '#E866B0', 11], [250, 300, '#FCC30B', 11],
-    [890, 285, '#56C02B', 11], [400, 560, '#F99B1C', 11], [750, 555, '#E91E8C', 11],
-    [470, 330, '#26BDE2', 8], [670, 340, '#E866B0', 8],
-  ];
-  const LINKS = [[0, 6], [6, 1], [1, 7], [7, 2], [0, 8], [8, 3], [2, 9], [9, 4], [3, 10], [10, 5], [5, 11], [11, 4], [6, 8], [7, 9], [8, 1], [9, 1], [8, 10], [9, 11], [0, 9], [3, 8]];
-  const constellation = new THREE.Group();
-  const zJit = [1.2, -0.8, 0.5, -1.4, 0.9, -0.5, 1.6, -1.1, 0.3, -1.6, 1.1, 0.6, -0.9, 1.4];
-  const nodePts = NODES.map(([px, py, color, pr], i) => {
-    const v = new THREE.Vector3((px - 570) / 570 * 11.8, (320 - py) / 320 * 6.2, -3 + zJit[i]);
-    const geo = new THREE.SphereGeometry(pr === 15 ? 0.34 : pr === 11 ? 0.26 : 0.19, 20, 20);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
-    mesh.position.copy(v);
-    mesh.scale.setScalar(0.001);
-    constellation.add(mesh);
-    return v;
-  });
-  const linePos = new Float32Array(LINKS.length * 6);
-  LINKS.forEach(([a, b], i) => {
-    nodePts[a].toArray(linePos, i * 6);
-    nodePts[b].toArray(linePos, i * 6 + 3);
-  });
   const lineGeo = new THREE.BufferGeometry();
   lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
   lineGeo.setDrawRange(0, 0);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0xc9cfda, transparent: true, opacity: 0.8 });
-  constellation.add(new THREE.LineSegments(lineGeo, lineMat));
-  constellation.position.z = 0;
-  scene3.add(constellation);
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xc9cfda, transparent: true, opacity: 0.7 });
+  const lines = new THREE.LineSegments(lineGeo, lineMat);
+  scene3.add(lines);
 
-  /* ── the DNA helix: two tube strands + rungs, screen-anchored while
-       the visitor travels stations 4–5 (Measure → 12 skills). ─────── */
-  const helix = new THREE.Group();
-  const HELIX_H = 23, HELIX_R = 3.3, TWIST = 0.62;
-  const strandMats = [];
-  for (const [phase, colorHex] of [[0, '#56C02B'], [Math.PI, '#26BDE2']]) {
-    const pts = [];
-    for (let k = 0; k <= 160; k++) {
-      const y = (k / 160 - 0.5) * HELIX_H;
-      const ang = y * TWIST + phase;
-      pts.push(new THREE.Vector3(Math.sin(ang) * HELIX_R, y, Math.cos(ang) * HELIX_R));
-    }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0 });
-    strandMats.push(mat);
-    helix.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 200, 0.16, 10, false), mat));
-  }
-  const rungMat = new THREE.MeshBasicMaterial({ color: '#F99B1C', transparent: true, opacity: 0 });
-  const rungs = [];
-  const RUNG_COUNT = 14;
-  for (let k = 0; k < RUNG_COUNT; k++) {
-    const y = (k / (RUNG_COUNT - 1) - 0.5) * (HELIX_H - 2);
-    const ang = y * TWIST;
-    const a = new THREE.Vector3(Math.sin(ang) * HELIX_R, y, Math.cos(ang) * HELIX_R);
-    const b = new THREE.Vector3(Math.sin(ang + Math.PI) * HELIX_R, y, Math.cos(ang + Math.PI) * HELIX_R);
-    const len = a.distanceTo(b);
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, len, 8), rungMat.clone());
-    mesh.position.copy(a).add(b).multiplyScalar(0.5);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    mesh.scale.set(0.001, 1, 0.001);
-    rungs.push(mesh);
-    helix.add(mesh);
-  }
-  helix.position.z = -1e4; // parked far away until needed
-  scene3.add(helix);
-
-  /* mouse parallax */
   const mouse = { x: 0, y: 0, tx: 0, ty: 0 };
   window.addEventListener('pointermove', (e) => {
     mouse.tx = (e.clientX / window.innerWidth - 0.5) * 2;
     mouse.ty = (e.clientY / window.innerHeight - 0.5) * 2;
   }, { passive: true });
-
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -359,28 +396,17 @@ function initThree() {
   });
 
   return {
-    renderer, scene3, camera, formations, morphGeo, morphPos, phases,
-    constellation, lineGeo, nLinks: LINKS.length,
-    helix, strandMats, rungs, mouse,
-    camZ: CAM_DIST, heroP: 1, dnaP: 0,
+    renderer, scene3, camera, geo, P, CL, phases, ...built,
+    lines, lineGeo, nLineSegs: LINE_NODES,
+    mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   SCROLL CHOREOGRAPHY (DOM)
+   DOM CHOREOGRAPHY
    ═══════════════════════════════════════════════════════════════════ */
 const washEl = document.getElementById('wash');
-const railEl = document.getElementById('rail');
-const railDots = scenes.map((s, i) => {
-  const d = document.createElement('div');
-  d.className = 'dot';
-  d.title = s.label;
-  d.addEventListener('click', () => goToScene(i));
-  railEl.appendChild(d);
-  return d;
-});
 let curScene = 0;
-
 function goToScene(i) {
   const s = scenes[clamp(i, 0, scenes.length - 1)];
   window.scrollTo({ top: s.el.offsetTop, behavior: reduced ? 'auto' : 'smooth' });
@@ -388,7 +414,6 @@ function goToScene(i) {
 document.getElementById('goPrev').addEventListener('click', () => goToScene(curScene - 1));
 document.getElementById('goNext').addEventListener('click', () => goToScene(curScene + 1));
 
-/* reveal-on-scroll */
 const obs = new IntersectionObserver((entries) => {
   entries.forEach((e) => {
     if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); }
@@ -398,22 +423,25 @@ document.querySelectorAll('.rv').forEach((el) => {
   if (reduced) el.classList.add('in'); else obs.observe(el);
 });
 
-/* stat count-up */
+const beatA = document.getElementById('beatA');
+const beatB = document.getElementById('beatB');
+const scrollHint = document.getElementById('scrollHint');
+let hintReady = false;
+
 const statEl = document.getElementById('stat');
 let counted = false;
 function countUp() {
-  const t0 = performance.now(), dur = 1300;
+  const t0 = performance.now(), dur = 1400;
   const step = (t) => {
     const p = clamp((t - t0) / dur);
-    statEl.textContent = String(Math.round(579 * ease(p)));
+    statEl.textContent = Math.round(2895 * ease(p)).toLocaleString('en-US');
     if (p < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 }
-if (reduced) { counted = true; }
+if (reduced) counted = true;
 else statEl.textContent = '0';
 
-/* tabs */
 const tabBtns = Array.from(document.querySelectorAll('[data-tab]'));
 const tabPanes = Array.from(document.querySelectorAll('[data-tabpane]'));
 const TAB_ON = { background: '#FFF6A8', borderColor: '#141414', color: '#141414' };
@@ -425,17 +453,17 @@ function setTab(i) {
 tabBtns.forEach((b, i) => b.addEventListener('click', () => setTab(i)));
 setTab(0);
 
-/* pinned-scene DOM targets, resolved lazily */
 function pinTargets(sc) {
   if (sc.t) return sc.t;
   const q = (s) => sc.el.querySelector(s);
   const qa = (s) => Array.from(sc.el.querySelectorAll(s));
   sc.t = {
-    h1w: q('[data-h1w]'), hbs: qa('[data-hb]'), zoom: q('[data-zoom]'),
+    zoom: q('[data-zoom]'),
     fans: [q('[data-fan="1"]'), q('[data-fan="2"]'), q('[data-fan="3"]')],
     aiCard: q('[data-ai-card]'), aiAns: q('[data-ai-ans]'), aiFoot: q('[data-ai-foot]'),
     stH: q('[data-st-h]'), stP: q('[data-st-p]'), pops: qa('[data-pop]'),
-    skillRows: qa('.skill-row'),
+    skillCards: qa('.skill-card'),
+    vH: q('[data-v-h]'), vLabels: qa('.view-label'),
   };
   return sc.t;
 }
@@ -453,33 +481,31 @@ function onScroll() {
   const f = stationF();
   const i = Math.floor(f), t = f - i;
 
-  /* wash crossfade */
   const wa = scenes[i].wash, wb = scenes[Math.min(i + 1, scenes.length - 1)].wash;
   const w = [0, 1, 2].map((k) => Math.round(lerp(wa[k], wb[k], t)));
   washEl.style.background = (w[0] === 255 && w[1] === 255 && w[2] === 255)
     ? '#fff'
     : `radial-gradient(1100px 700px at 50% 38%, rgb(${w[0]},${w[1]},${w[2]}), #ffffff 78%)`;
 
-  /* rail */
   curScene = t < 0.5 ? i : i + 1;
-  railDots.forEach((d, k) => d.classList.toggle('on', k === curScene));
 
-  /* pinned scenes */
   scenes.forEach((sc) => {
     if (!sc.pin) return;
     const p = localP(sc.track || sc.el, vh);
     const T = pinTargets(sc);
-    if (sc.pin === 'hero' && T.h1w) {
-      const q = ease(clamp(p / 0.5));
-      T.h1w.style.transform = `translateY(${(1 - q) * 0.17 * vh}px)`;
-      T.hbs.forEach((el, k) => {
-        if (p > 0.02) {
-          const v = clamp((p - 0.1 - k * 0.05) / 0.14);
-          if (v > 0) { el.style.opacity = String(v); el.style.transform = `translateY(${(1 - v) * 22}px)`; }
-        }
-      });
+    if (sc.pin === 'hero') {
+      // beat A (question) hands over to beat B (the answer) mid-pin
+      const out = ease(clamp((p - 0.22) / 0.2));
+      const inn = ease(clamp((p - 0.42) / 0.22));
+      beatA.style.opacity = String(1 - out);
+      beatA.style.transform = `translateY(${out * -46}px) scale(${1 - out * 0.05})`;
+      beatA.style.pointerEvents = out > 0.5 ? 'none' : 'auto';
+      beatB.style.opacity = String(inn);
+      beatB.style.transform = `translateY(${(1 - inn) * 40}px)`;
+      beatB.style.pointerEvents = inn > 0.5 ? 'auto' : 'none';
+      if (inn > 0.4 && !counted) { counted = true; countUp(); }
+      if (hintReady) scrollHint.style.opacity = p > 0.04 ? '0' : '1';
       if (three) three.heroP = p;
-      if (p > 0.35 && !counted) { counted = true; countUp(); }
     }
     if (sc.pin === 'dash' && T.zoom) {
       const q = ease(clamp(p / 0.65));
@@ -492,6 +518,26 @@ function onScroll() {
       T.fans[2].style.transform = `rotate(${7 * q}deg) translateX(${-(290 - 266 * q)}px)`;
       T.fans[1].style.transform = `translateY(${-14 * q}px) scale(${0.96 + 0.04 * q})`;
     }
+    if (sc.pin === 'views' && T.vH) {
+      const q = ease(clamp((p - 0.08) / 0.2));
+      T.vH.style.opacity = String(q);
+      T.vH.style.transform = `translateY(${(1 - q) * 24}px)`;
+      T.vLabels.forEach((el, k) => el.classList.toggle('in', p > 0.34 + k * 0.1));
+    }
+    if (sc.pin === 'skills' && T.skillCards.length) {
+      T.skillCards.forEach((card, k) => card.classList.toggle('in', p > 0.12 + k * 0.055));
+    }
+    if (sc.pin === 'state' && T.stH) {
+      const q = ease(clamp(p / 0.4));
+      T.stH.style.transform = `scale(${0.88 + 0.12 * q})`;
+      T.stH.style.opacity = String(0.15 + 0.85 * q);
+      T.stP.style.opacity = String(clamp((p - 0.16) / 0.22));
+      T.pops.forEach((pl, k) => {
+        const v = clamp((p - 0.45 - k * 0.08) / 0.12);
+        pl.style.opacity = String(v);
+        pl.style.transform = `scale(${0.6 + 0.4 * v})`;
+      });
+    }
     if (sc.pin === 'ai' && T.aiCard) {
       const q1 = ease(clamp(p / 0.45));
       T.aiCard.style.opacity = String(0.1 + 0.9 * q1);
@@ -501,27 +547,8 @@ function onScroll() {
       T.aiAns.style.transform = `translateY(${(1 - q2) * 16}px)`;
       T.aiFoot.style.opacity = String(0.15 + 0.85 * clamp((p - 0.76) / 0.2));
     }
-    if (sc.pin === 'skills' && T.skillRows.length) {
-      // rows are [left×6, right×6]; reveal in pairs, in step with the helix
-      T.skillRows.forEach((row, k) => {
-        const pair = k % 6;
-        row.classList.toggle('in', p > 0.06 + pair * 0.13);
-      });
-    }
-    if (sc.pin === 'state' && T.stH) {
-      const q = ease(clamp(p / 0.5));
-      T.stH.style.transform = `scale(${0.86 + 0.14 * q})`;
-      T.stH.style.opacity = String(0.15 + 0.85 * q);
-      T.stP.style.opacity = String(clamp((p - 0.2) / 0.25));
-      T.pops.forEach((pl, k) => {
-        const v = clamp((p - 0.42 - k * 0.09) / 0.12);
-        pl.style.opacity = String(v);
-        pl.style.transform = `scale(${0.6 + 0.4 * v})`;
-      });
-    }
   });
 
-  /* DNA measure stages */
   if (dnaSec) {
     const p = localP(dnaSec, vh);
     const stage = p < 0.32 ? 0 : p < 0.62 ? 1 : 2;
@@ -535,7 +562,6 @@ function onScroll() {
     if (three) three.dnaP = p;
   }
 
-  /* journey ball follows its dotted path */
   if (jSec && jPath && jBall) {
     const r = jSec.getBoundingClientRect();
     const p = clamp((vh * 0.6 - r.top - 180) / Math.max(1, r.height - 200));
@@ -551,11 +577,11 @@ function onScroll() {
    FRAME LOOP
    ═══════════════════════════════════════════════════════════════════ */
 if (reduced) {
-  // no motion: static page, canvas hidden, everything revealed
   document.getElementById('world').style.display = 'none';
-  document.querySelectorAll('[data-hb]').forEach((el) => { el.style.opacity = '1'; el.style.transform = 'none'; });
-  document.querySelectorAll('.skill-row').forEach((el) => el.classList.add('in'));
-  statEl.textContent = '579';
+  beatA.querySelectorAll('[data-hb]').forEach((el) => el.classList.add('in'));
+  beatB.style.opacity = '1';
+  document.querySelectorAll('.skill-card, .view-label').forEach((el) => el.classList.add('in'));
+  statEl.textContent = '2,895';
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 } else {
@@ -563,74 +589,147 @@ if (reduced) {
   let f = 0;
   let lastT = performance.now();
 
-  // keep DOM choreography live even when rAF is throttled (hidden tab)
   window.addEventListener('scroll', onScroll, { passive: true });
   window.__tilliScroll = onScroll;
 
-  function frame(now) {
+  // hero entrance: the question fades in over the scattered dots
+  beatA.querySelectorAll('[data-hb]').forEach((el, k) => setTimeout(() => el.classList.add('in'), 300 + k * 180));
+  setTimeout(() => { hintReady = true; onScroll(); }, 1100);
+
+  const rotate2D = (P, k, cx, cz, ang) => {
+    const x = P[k] - cx, z = P[k + 2] - cz;
+    const cs = Math.cos(ang), sn = Math.sin(ang);
+    P[k] = cx + x * cs - z * sn;
+    P[k + 2] = cz + x * sn + z * cs;
+  };
+  const rotXY = (P, k, cx, cy, ang) => {
+    const x = P[k] - cx, y = P[k + 1] - cy;
+    const cs = Math.cos(ang), sn = Math.sin(ang);
+    P[k] = cx + x * cs - y * sn;
+    P[k + 1] = cy + y * cs + x * sn;
+  };
+
+  const white = { r: 1, g: 1, b: 1 };
+  const sp = [0, 0, 0];
+
+  function step(now) {
     const dt = Math.min((now - lastT) / 1000, 0.05);
     lastT = now;
     f = onScroll();
 
-    if (three) {
-      const th = three;
-      const time = now / 1000;
+    if (!three) { return; }
+    const th = three;
+    const time = now / 1000;
 
-      /* camera flight, smoothed */
-      const targetZ = CAM_DIST - f * DEPTH;
-      th.camZ = lerp(th.camZ, targetZ, 1 - Math.exp(-dt * 5));
-      const mx = th.mouse;
-      mx.x = lerp(mx.x, mx.tx, 1 - Math.exp(-dt * 3));
-      mx.y = lerp(mx.y, mx.ty, 1 - Math.exp(-dt * 3));
-      th.camera.position.set(mx.x * 1.1, -mx.y * 0.7 + Math.sin(time * 0.3) * 0.15, th.camZ);
-      th.camera.lookAt(mx.x * 0.4, -mx.y * 0.25, th.camZ - 30);
+    const targetZ = CAM_DIST - f * DEPTH;
+    th.camZ = lerp(th.camZ, targetZ, 1 - Math.exp(-dt * 5));
+    const mx = th.mouse;
+    mx.x = lerp(mx.x, mx.tx, 1 - Math.exp(-dt * 3));
+    mx.y = lerp(mx.y, mx.ty, 1 - Math.exp(-dt * 3));
+    th.camera.position.set(mx.x * 1.1, -mx.y * 0.7 + Math.sin(time * 0.3) * 0.15, th.camZ);
+    th.camera.lookAt(mx.x * 0.4, -mx.y * 0.25, th.camZ - 30);
+    const planeZ = th.camZ - CAM_DIST;
 
-      const planeZ = th.camZ - CAM_DIST; // the active formation plane
-
-      /* morph field: lerp formations + idle breathing */
-      const i = Math.min(Math.floor(f), th.formations.length - 2);
-      const tt = smooth(clamp(f - i));
-      const A = th.formations[i], B = th.formations[i + 1];
-      const P = th.morphPos, PH = th.phases;
-      for (let k = 0; k < N * 3; k += 3) {
-        P[k] = lerp(A[k], B[k], tt) + Math.sin(time * 0.55 + PH[k]) * 0.14;
-        P[k + 1] = lerp(A[k + 1], B[k + 1], tt) + Math.sin(time * 0.5 + PH[k + 1]) * 0.14;
-        P[k + 2] = lerp(A[k + 2], B[k + 2], tt) + Math.sin(time * 0.6 + PH[k + 2]) * 0.14 + planeZ;
-      }
-      th.morphGeo.attributes.position.needsUpdate = true;
-
-      /* hero constellation build-in (driven by hero pin progress) */
-      const hp = th.heroP;
-      th.constellation.children.forEach((child, k) => {
-        if (child.isMesh) {
-          const v = ease(clamp((hp - 0.04 - k * 0.022) / 0.14));
-          const breathe = 1 + Math.sin(time * 0.9 + k) * 0.06;
-          child.scale.setScalar(Math.max(0.001, v * breathe));
-        }
-      });
-      th.lineGeo.setDrawRange(0, Math.floor(clamp((hp - 0.1) / 0.5) * th.nLinks) * 2);
-      th.constellation.rotation.y = Math.sin(time * 0.22) * 0.05 + mx.x * 0.04;
-      th.constellation.rotation.x = mx.y * 0.025;
-
-      /* DNA helix: appears through stations 4–5, screen-anchored */
-      const vis = clamp((f - 3.55) / 0.45) * (1 - clamp((f - 5.55) / 0.45));
-      if (vis > 0.001) {
-        th.helix.position.set(0, 0, planeZ - 3);
-        th.helix.rotation.y = f * 1.35 + time * 0.12;
-        th.strandMats.forEach((m) => { m.opacity = vis * 0.95; });
-        const rp = clamp(th.dnaP > 0 ? (th.dnaP - 0.55) / 0.4 : 0) || clamp((f - 4.6) / 0.5);
-        th.rungs.forEach((rg, k) => {
-          const v = ease(clamp((rp - k * 0.05) / 0.12));
-          rg.material.opacity = vis * v;
-          rg.scale.set(Math.max(0.001, v), 1, Math.max(0.001, v));
-        });
-      } else {
-        th.helix.position.z = -1e4;
-      }
-
-      th.renderer.render(th.scene3, th.camera);
+    /* base morph between the two neighbouring stations */
+    const i = Math.min(Math.floor(f), th.F.length - 2);
+    const tt = smooth(clamp(f - i));
+    const A = th.F[i], B = th.F[i + 1];
+    const P = th.P, CL = th.CL, PH = th.phases;
+    for (let k = 0; k < N * 3; k += 3) {
+      P[k] = lerp(A.pos[k], B.pos[k], tt);
+      P[k + 1] = lerp(A.pos[k + 1], B.pos[k + 1], tt);
+      P[k + 2] = lerp(A.pos[k + 2], B.pos[k + 2], tt);
+      CL[k] = lerp(A.col[k], B.col[k], tt);
+      CL[k + 1] = lerp(A.col[k + 1], B.col[k + 1], tt);
+      CL[k + 2] = lerp(A.col[k + 2], B.col[k + 2], tt);
     }
+
+    /* HERO: beat B pulls the scattered dots into the connected ring */
+    const heroBeat = ease(clamp((th.heroP - 0.3) / 0.3));
+    if (i === 0 && heroBeat > 0) {
+      const wgt = heroBeat * (1 - tt);
+      for (let k = 0; k < N * 3; k += 3) {
+        P[k] += (th.heroRing[k] - A.pos[k]) * wgt;
+        P[k + 1] += (th.heroRing[k + 1] - A.pos[k + 1]) * wgt;
+        P[k + 2] += (th.heroRing[k + 2] - A.pos[k + 2]) * wgt;
+      }
+    }
+    const lineBeat = clamp((th.heroP - 0.45) / 0.3) * (1 - clamp(f - 0.3, 0, 0.2) * 5);
+    th.lineGeo.setDrawRange(0, Math.floor(ease(clamp(lineBeat)) * th.nLineSegs) * 2);
+    th.lines.position.z = planeZ;
+    th.lines.material.opacity = 0.7 * clamp(1 - (f - 0.25) * 3);
+
+    /* DASHBOARD: the stream actually flows */
+    {
+      const wgt = clamp(1 - Math.abs(f - ST['Dashboard']));
+      if (wgt > 0.01) {
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          const t2 = (th.streamT[n] + time * 0.04) % 1;
+          th.streamPoint(t2, k, sp);
+          P[k] = lerp(P[k], sp[0], wgt);
+          P[k + 1] = lerp(P[k + 1], sp[1], wgt);
+          P[k + 2] = lerp(P[k + 2], sp[2], wgt);
+        }
+      }
+    }
+
+    /* COLLECT: the spiral keeps rotating till scroll */
+    {
+      const wgt = clamp(1 - Math.abs(f - ST['Collect']));
+      if (wgt > 0.01) {
+        const ang = time * 0.45 * wgt;
+        for (let k = 0; k < N * 3; k += 3) rotXY(P, k, 0, 0, ang);
+      }
+    }
+
+    /* DNA: strands appear in stage order, then the helix rotates */
+    {
+      const dnaI = ST['Measure'], skI = ST['12 skills'];
+      const wgt = clamp((f - (dnaI - 0.55)) / 0.4) * (1 - clamp((f - (skI + 0.45)) / 0.4));
+      if (wgt > 0.01) {
+        const cx = lerp(0, 7.2, smooth(clamp(f - dnaI)));
+        const ang = time * 0.4;
+        const reveal = f > dnaI + 0.5 ? 1 : th.dnaP; // fully woven once past Measure
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          rotate2D(P, k, cx * (i >= dnaI ? 1 : 0), -3, ang * wgt);
+          const vis = smooth(clamp((reveal - th.dnaThresh[n]) / 0.05));
+          const fade = 1 - (1 - vis) * wgt;
+          CL[k] = lerp(white.r, CL[k], fade);
+          CL[k + 1] = lerp(white.g, CL[k + 1], fade);
+          CL[k + 2] = lerp(white.b, CL[k + 2], fade);
+        }
+      }
+    }
+
+    /* ON TRACK: each child slowly turns — term by term */
+    {
+      const wgt = clamp(1 - Math.abs(f - ST['On track']));
+      if (wgt > 0.01) {
+        const centers = [-9.5, 0, 9.5];
+        const ang = time * 0.3 * wgt;
+        for (let n = 0; n < N; n++) rotXY(P, n * 3, centers[n % 3], -1.2, ang);
+      }
+    }
+
+    /* idle breathing + anchor to the camera's plane */
+    for (let k = 0; k < N * 3; k += 3) {
+      P[k] += Math.sin(time * 0.5 + PH[k]) * 0.12;
+      P[k + 1] += Math.sin(time * 0.45 + PH[k + 1]) * 0.12;
+      P[k + 2] += Math.sin(time * 0.55 + PH[k + 2]) * 0.12 + planeZ;
+    }
+    th.geo.attributes.position.needsUpdate = true;
+    th.geo.attributes.color.needsUpdate = true;
+
+    th.renderer.render(th.scene3, th.camera);
+  }
+
+  function frame(now) {
+    step(now);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  window.__tilliStep = step;
+  window.__tilliThree = () => three;
 }
