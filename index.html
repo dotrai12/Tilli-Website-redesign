@@ -17,28 +17,40 @@
   /* ── Fixed layers ─────────────────────────────────────────── */
   #wash { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   #world { position: fixed; inset: 0; z-index: 1; pointer-events: none; width: 100vw; height: 100vh; display: block; }
-  .content { position: relative; z-index: 2; }
+  .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 40; display: flex; height: 8px; }
+  .topbar div { flex: 1; }
 
   /* ── Nav arrows ───────────────────────────────────────────── */
   #arrows { position: fixed; right: 16px; bottom: 22px; z-index: 50; display: flex; flex-direction: column; gap: 10px; }
   #arrows .btn { width: 44px; height: 44px; border-radius: 50%; background: #fff; border: 1.5px solid var(--tl-line-200); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: var(--tl-ink-700); cursor: pointer; box-shadow: 0 2px 10px rgba(20,20,20,0.08); user-select: none; transition: all .25s ease; }
   #arrows .btn:hover { border-color: var(--tl-pink-600); color: var(--tl-pink-600); }
 
-  .topbar { position: relative; z-index: 2; display: flex; height: 8px; }
-  .topbar div { flex: 1; }
+  /* ── THE STAGE SYSTEM ─────────────────────────────────────────
+     Nothing on this page is in normal flow. Every `.scene` is an
+     empty scroll spacer: its only job is to own a slice of the
+     scrollbar. The visible content lives in a `.stage`, which is
+     position:fixed at the viewport, so it never travels — it only
+     cross-fades. `.step`s are sub-panels inside a stage that fade
+     between each other within that scene's scroll slice. ───────── */
+  .content { position: relative; z-index: 2; }
+  .scene { position: relative; }
+  .stage { position: fixed; inset: 0; overflow: hidden; opacity: 0; visibility: hidden; pointer-events: none; }
+  .step { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 6vh 20px; opacity: 0; pointer-events: none; }
+  .step-in { width: 100%; transform-origin: 50% 50%; }
+  .stage-deco { position: absolute; inset: 0; pointer-events: none; }
+
+  /* in-step stagger — opacity only, never translation */
+  .rv { opacity: 0; transition: opacity .7s ease; }
+  .rv.in { opacity: 1; }
 
   /* ── Shared ───────────────────────────────────────────────── */
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
   .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.22em; color: var(--tl-cyan-700); }
-  .pin-track { position: relative; }
-  .pin-view { position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   .btn-pink { background: var(--tl-pink-600); color: #fff; font-weight: 700; font-size: 17px; padding: 15px 36px; border-radius: 999px; display: inline-block; }
   .btn-pink:hover { background: #C4147A; color: #fff; transform: translateY(-2px); }
-  .rv { opacity: 0; transform: translateY(26px); transition: opacity .65s ease, transform .65s cubic-bezier(.2,.7,.3,1); }
-  .rv.in { opacity: 1; transform: translateY(0); }
 
-  /* ── Hero: two beats stacked in the same spot ─────────────── */
-  .hero-inner { position: relative; max-width: 1140px; width: 100%; margin: 0 auto; padding: 0 24px; text-align: center; display: grid; }
+  /* ── Hero ─────────────────────────────────────────────────── */
+  .hero-inner { position: relative; max-width: 1140px; width: 100%; margin: 0 auto; padding: 0 24px; text-align: center; }
   /* soft scrim so the headline stays readable over the dot field; colour
      follows the scene wash (--glow-rgb, set in main.js) */
   .hero-glow { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1280px, 104vw); height: min(660px, 82vh); pointer-events: none;
@@ -48,58 +60,71 @@
       rgba(var(--glow-rgb, 255,255,255), 0.72) 52%,
       rgba(var(--glow-rgb, 255,255,255), 0.32) 70%,
       rgba(var(--glow-rgb, 255,255,255), 0) 85%); }
-  .hero-beat { grid-area: 1 / 1; align-self: center; will-change: transform, opacity; }
-  .hero-beat [data-hb] { position: relative; opacity: 0; transform: translateY(26px); transition: opacity .9s ease, transform .9s cubic-bezier(.2,.7,.3,1); }
-  .hero-beat [data-hb].in { opacity: 1; transform: translateY(0); }
-  .hero-inner h1 { font-size: 60px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; color: var(--tl-ink-900); max-width: 840px; margin: 22px auto 0; }
-  .hero-sub { font-size: 30px; font-weight: 600; line-height: 1.5; color: var(--tl-ink-700); max-width: 700px; margin: 0 auto; }
-  #stat { font-weight: 800; font-size: 58px; color: var(--tl-pink-600); vertical-align: -6px; }
-  #beatB { opacity: 0; }
+  .hero-inner > *:not(.hero-glow) { position: relative; }
+  .hero-beat [data-hb] { opacity: 0; transform: scale(0.985); transition: opacity .9s ease, transform .9s cubic-bezier(.2,.7,.3,1); }
+  .hero-beat [data-hb].in { opacity: 1; transform: scale(1); }
+  .hero-inner h1 { font-size: min(60px, 6.4vh); font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; color: var(--tl-ink-900); max-width: 840px; margin: 22px auto 0; }
+  .hero-sub { font-size: min(30px, 3.4vh); font-weight: 600; line-height: 1.5; color: var(--tl-ink-700); max-width: 700px; margin: 0 auto; }
+  #stat { font-weight: 800; font-size: min(58px, 6.4vh); color: var(--tl-pink-600); vertical-align: -6px; }
   @keyframes hintPulse { 0%, 100% { transform: scaleY(0.35); transform-origin: top; opacity: .5; } 50% { transform: scaleY(1); opacity: 1; } }
-  @media (max-height: 820px) { #scrollHint { display: none; } }
+  #scrollHint { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 0; transition: opacity .6s ease; pointer-events: none; }
+  @media (max-height: 720px) { #scrollHint { display: none; } }
 
   /* ── Levels cards ─────────────────────────────────────────── */
-  .level-card { border-radius: 24px; padding: 32px 36px; width: 240px; }
-  .level-card .t { font-size: 20px; font-weight: 800; margin: 14px 0 8px; }
+  .level-card { border-radius: 24px; padding: 28px 32px; width: 240px; }
+  .level-card .t { font-size: 20px; font-weight: 800; margin: 12px 0 8px; }
   .level-card .d { font-size: 14.5px; line-height: 1.5; }
 
   /* ── 3 views scene ────────────────────────────────────────── */
-  .views-stage { height: 100%; width: 100%; max-width: 1140px; margin: 0 auto; padding: 11vh 24px 12vh; display: flex; flex-direction: column; justify-content: space-between; align-items: center; text-align: center; }
+  .views-stage { width: 100%; max-width: 1140px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: min(52px, 8vh); }
   .views-row { display: flex; justify-content: space-between; width: 100%; max-width: 1000px; gap: 24px; }
-  .view-label { flex: 1; opacity: 0; transform: translateY(20px); transition: opacity .55s ease, transform .55s ease; }
-  .view-label.in { opacity: 1; transform: translateY(0); }
+  .view-label { flex: 1; opacity: 0; transform: scale(0.97); transition: opacity .55s ease, transform .55s ease; }
+  .view-label.in { opacity: 1; transform: scale(1); }
   .view-label .n { font-weight: 800; font-size: 19px; color: var(--tl-ink-800); }
   .view-label .d { font-size: 14px; margin-top: 6px; }
 
   /* ── DNA measure ──────────────────────────────────────────── */
-  .dna-grid { max-width: 1140px; margin: 0 auto; height: 100%; display: grid; grid-template-columns: minmax(220px, 320px) minmax(150px, 1fr) minmax(260px, 360px); align-items: center; gap: 24px; padding: 0 24px; }
+  .dna-grid { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: minmax(220px, 320px) minmax(150px, 1fr) minmax(260px, 360px); align-items: center; gap: 24px; padding: 0 24px; }
   .stage-title { opacity: 0.25; transition: opacity 0.4s ease; }
-  .stage-panel { position: absolute; inset: 0; display: flex; align-items: center; opacity: 0; transition: opacity 0.45s ease, transform 0.45s ease; transform: translateY(18px); pointer-events: none; }
+  .stage-panel { position: absolute; inset: 0; display: flex; align-items: center; opacity: 0; transition: opacity 0.45s ease; pointer-events: none; }
 
   /* ── 12 skills: grid left, DNA right ──────────────────────── */
   .skills-wrap { width: 100%; max-width: 1140px; margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); gap: 24px; align-items: center; }
   .skills-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  .skill-card { background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 16px; padding: 13px 15px; text-align: left; opacity: 0; transform: translateY(16px) scale(0.96); transition: opacity .5s ease, transform .5s ease; }
-  .skill-card.in { opacity: 1; transform: translateY(0) scale(1); }
+  .skill-card { background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 16px; padding: 13px 15px; text-align: left; opacity: 0; transform: scale(0.96); transition: opacity .5s ease, transform .5s ease; }
+  .skill-card.in { opacity: 1; transform: scale(1); }
   .skill-card .n { font-weight: 800; font-size: 13.5px; }
   .skill-card .d { font-size: 11.5px; line-height: 1.4; margin-top: 3px; color: var(--tl-ink-500); }
 
-  /* ── Journey ──────────────────────────────────────────────── */
-  .j-card { background: #fff; border-radius: 24px; padding: 40px; min-height: 300px; display: flex; gap: 36px; align-items: center; }
+  /* ── Journey: a fixed dotted spine on the left, cards fade
+        through it on the right ──────────────────────────────── */
+  .j-deco { position: absolute; left: 6vw; top: 0; bottom: 0; width: 320px; display: flex; flex-direction: column; justify-content: center; gap: 26px; }
+  .j-stage .step { justify-content: flex-end; }
+  .j-stage .step-in { width: min(660px, 52vw); margin-right: 6vw; }
+  .j-card { background: #fff; border-radius: 24px; padding: 32px; display: flex; gap: 28px; align-items: center; box-shadow: 0 2px 10px rgba(20,20,20,0.05); }
+
+  /* ── Footer strip on the closing stage ────────────────────── */
+  .foot { position: absolute; left: 0; right: 0; bottom: 0; border-top: 1px solid var(--tl-line-200); padding: 20px 24px; background: rgba(255,255,255,0.92); pointer-events: auto; }
 
   /* ── Responsive ───────────────────────────────────────────── */
+  @media (max-width: 1080px) {
+    .j-deco { display: none; }
+    .j-stage .step { justify-content: center; }
+    .j-stage .step-in { width: 100%; max-width: 660px; margin-right: 0; }
+  }
   @media (max-width: 900px) {
-    .hero-inner h1 { font-size: 38px; }
-    .hero-sub { font-size: 20px; }
-    #stat { font-size: 36px; }
+    .hero-inner h1 { font-size: min(38px, 5.4vh); }
+    .hero-sub { font-size: min(20px, 2.8vh); }
+    #stat { font-size: min(36px, 5vh); }
     .dna-grid { grid-template-columns: 1fr; align-content: center; gap: 14px; }
     .dna-grid .dna-spacer { display: none; }
     .skills-wrap { grid-template-columns: 1fr; }
     .skills-wrap .helix-side { display: none; }
     .skills-grid { grid-template-columns: repeat(2, 1fr); }
     .views-row { flex-direction: column; gap: 10px; }
-    .j-card { flex-direction: column; text-align: center; }
+    .j-card { flex-direction: column; text-align: center; padding: 24px; }
     h2 { font-size: 30px !important; }
+    .foot { padding: 14px 20px; }
   }
 </style>
 </head>
@@ -108,11 +133,6 @@
 <div id="wash"></div>
 <canvas id="world"></canvas>
 
-<div id="arrows">
-  <div class="btn" id="goPrev">↑</div>
-  <div class="btn" id="goNext">↓</div>
-</div>
-
 <div class="topbar">
   <div style="background: var(--tl-green-500);"></div>
   <div style="background: var(--tl-pink-400);"></div>
@@ -120,91 +140,114 @@
   <div style="background: var(--tl-yellow-500);"></div>
 </div>
 
+<div id="arrows">
+  <div class="btn" id="goPrev">↑</div>
+  <div class="btn" id="goNext">↓</div>
+</div>
+
+<div id="scrollHint">
+  <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.24em; color: var(--tl-ink-300);">SCROLL</div>
+  <div style="width: 2px; height: 34px; border-radius: 2px; background: linear-gradient(var(--tl-pink-600), var(--tl-cyan-500)); animation: hintPulse 1.6s ease-in-out infinite;"></div>
+</div>
+
 <div class="content">
 
-<!-- ═══ 1 · HERO — beat A: question in scattered dots;
-             beat B: the dots connect around the answer ═══════ -->
-<div data-scene data-wash="255,255,255" data-label="Start" data-pin="hero">
-<div class="pin-track" data-pin-track style="height: 260vh;">
-<header class="pin-view">
-  <div class="hero-inner">
-    <div class="hero-glow"></div>
-    <div class="hero-beat" id="beatA">
-      <div data-hb class="eyebrow">MEASURE · ANALYZE · INTERVENE</div>
-      <h1 data-hb>How do schools make a <span style="color: var(--tl-pink-600);">decision</span> for their students?</h1>
-    </div>
-    <div class="hero-beat" id="beatB">
-      <p class="hero-sub">They measure — and they ask.<br><span id="stat">2,895</span><br>data points collected for that child.</p>
-      <div style="display: flex; gap: 18px; justify-content: center; align-items: center; margin-top: 34px;">
-        <a href="mailto:kavindya@tillikids.com" class="btn-pink">Book a demo</a>
-        <a href="#how" style="font-weight: 700; font-size: 16px;">See how it works →</a>
+<!-- ═══ 1 · HERO — step A: question in scattered dots;
+             step B: the dots connect around the answer ═══════ -->
+<div class="scene" data-scene data-wash="255,255,255" data-label="Start" data-pin="hero" style="height: 220vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="hero-inner">
+          <div class="hero-glow"></div>
+          <div class="hero-beat" id="beatA">
+            <div data-hb class="eyebrow">MEASURE · ANALYZE · INTERVENE</div>
+            <h1 data-hb>How do schools make a <span style="color: var(--tl-pink-600);">decision</span> for their students?</h1>
+          </div>
+        </div>
       </div>
-      <div style="margin-top: min(56px, 6vh);">
-        <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.14em; color: var(--tl-ink-300); margin-bottom: 16px;">INCUBATED AT STANFORD · SCALED WITH UNICEF INNOVATION</div>
-        <div style="display: flex; gap: 40px; justify-content: center; align-items: center;">
-          <img src="assets/ds/stanford-gse.png" alt="Stanford Graduate School of Education" style="height: 42px; width: auto;">
-          <img src="assets/ds/unicef-innovation.png" alt="UNICEF Innovation" style="height: 38px; width: auto;">
+    </div>
+    <div class="step">
+      <div class="step-in">
+        <div class="hero-inner">
+          <div class="hero-glow"></div>
+          <div class="hero-beat" id="beatB">
+            <p class="hero-sub">They measure — and they ask.<br><span id="stat">2,895</span><br>data points collected for that child.</p>
+            <div style="display: flex; gap: 18px; justify-content: center; align-items: center; margin-top: min(34px, 4vh); flex-wrap: wrap;">
+              <a href="mailto:kavindya@tillikids.com" class="btn-pink">Book a demo</a>
+              <a href="#how" style="font-weight: 700; font-size: 16px;">See how it works →</a>
+            </div>
+            <div style="margin-top: min(56px, 6vh);">
+              <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.14em; color: var(--tl-ink-300); margin-bottom: 16px;">INCUBATED AT STANFORD · SCALED WITH UNICEF INNOVATION</div>
+              <div style="display: flex; gap: 40px; justify-content: center; align-items: center;">
+                <img src="assets/ds/stanford-gse.png" alt="Stanford Graduate School of Education" style="height: 42px; width: auto;">
+                <img src="assets/ds/unicef-innovation.png" alt="UNICEF Innovation" style="height: 38px; width: auto;">
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
-  <div id="scrollHint" style="position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 0; transition: opacity .6s ease;">
-    <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.24em; color: var(--tl-ink-300);">SCROLL</div>
-    <div style="width: 2px; height: 34px; border-radius: 2px; background: linear-gradient(var(--tl-pink-600), var(--tl-cyan-500)); animation: hintPulse 1.6s ease-in-out infinite;"></div>
-  </div>
-</header>
-</div>
 </div>
 
 <!-- ═══ 2 · DASHBOARD — the data flows in, and funnels out ════ -->
-<div data-scene data-wash="217,245,255" data-label="Dashboard" data-pin="dash" id="how">
-  <div class="pin-track" data-pin-track style="height: 220vh;">
-  <div class="pin-view">
-    <div class="wrap" style="text-align: center;">
-      <div class="eyebrow">ANALYZE</div>
-      <h2 style="font-size: 40px; font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 720px;">Schools see every data point in <span style="color: var(--tl-cyan-700);">one simple dashboard</span>.</h2>
-      <p style="font-size: 18px; line-height: 1.6; max-width: 620px; margin: 0 auto 34px;">Easy to use, easy to navigate — built for teachers, not analysts.</p>
-      <div data-zoom style="max-width: 940px; margin: 0 auto; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: 14px; box-shadow: 0 2px 10px rgba(20,20,20,0.06); will-change: transform;">
-        <video src="uploads/assets_dashboard-1785392844586.mp4" muted autoplay loop playsinline preload="auto" style="width: 100%; max-height: 56vh; object-fit: cover; border-radius: 14px; display: block; min-height: 200px; background: var(--tl-surface-100);"></video>
+<div class="scene" data-scene data-wash="217,245,255" data-label="Dashboard" data-pin="dash" id="how" style="height: 210vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="wrap" style="text-align: center;">
+          <div class="eyebrow">ANALYZE</div>
+          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 720px;">Schools see every data point in <span style="color: var(--tl-cyan-700);">one simple dashboard</span>.</h2>
+          <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 620px; margin: 0 auto min(34px, 4vh);">Easy to use, easy to navigate — built for teachers, not analysts.</p>
+          <div data-zoom style="max-width: 940px; margin: 0 auto; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: 14px; box-shadow: 0 2px 10px rgba(20,20,20,0.06); will-change: transform;">
+            <video src="uploads/assets_dashboard-1785392844586.mp4" muted autoplay loop playsinline preload="auto" style="width: 100%; max-height: 52vh; object-fit: cover; border-radius: 14px; display: block; min-height: 200px; background: var(--tl-surface-100);"></video>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-  </div>
-  <div class="wrap" style="padding-top: 40px; padding-bottom: 100px; text-align: center;">
-    <p class="rv" style="font-size: 17px; font-weight: 600; color: var(--tl-ink-700); margin: 0 0 28px;">Every skill lands at one of three levels:</p>
-    <div class="rv" style="display: flex; gap: 28px; justify-content: center; flex-wrap: wrap;">
-      <div class="level-card" style="background: var(--tl-wash-pink);">
-        <svg viewBox="0 0 80 90" style="height: 84px;"><path d="M40 88 L40 48" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 66 C 30 62 24 54 24 46 C 34 48 40 54 40 62" fill="#56C02B"></path></svg>
-        <div class="t" style="color: var(--tl-pink-600);">Beginner</div>
-        <div class="d">This skill is emerging. Practice and support will help it grow.</div>
-      </div>
-      <div class="level-card" style="background: var(--tl-wash-yellow-soft);">
-        <svg viewBox="0 0 80 90" style="height: 84px;"><path d="M40 88 L40 34" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 62 C 30 58 24 50 24 42 C 34 44 40 50 40 58" fill="#56C02B"></path><ellipse cx="40" cy="26" rx="9" ry="13" fill="#FCC30B"></ellipse></svg>
-        <div class="t" style="color: #C79600;">Learner</div>
-        <div class="d">Developing well — showing this skill in many situations.</div>
-      </div>
-      <div class="level-card" style="background: var(--tl-wash-green);">
-        <svg viewBox="0 0 80 90" style="height: 84px;"><path d="M40 88 L40 34" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 64 C 30 60 24 52 24 44 C 34 46 40 52 40 60" fill="#56C02B"></path><path d="M40 66 C 50 62 56 54 56 46 C 46 48 40 54 40 62" fill="#56C02B"></path><circle cx="40" cy="20" r="7" fill="#FCC30B"></circle><ellipse cx="40" cy="4" rx="6" ry="9" fill="#26BDE2"></ellipse><ellipse cx="40" cy="36" rx="6" ry="9" fill="#26BDE2"></ellipse><ellipse cx="24" cy="20" rx="9" ry="6" fill="#26BDE2"></ellipse><ellipse cx="56" cy="20" rx="9" ry="6" fill="#26BDE2"></ellipse></svg>
-        <div class="t" style="color: var(--tl-green-600);">Expert</div>
-        <div class="d">Strong and consistent — really shining in this area.</div>
+    <div class="step">
+      <div class="step-in">
+        <div class="wrap" style="text-align: center;">
+          <p class="rv" style="font-size: 17px; font-weight: 600; color: var(--tl-ink-700); margin: 0 0 28px;">Every skill lands at one of three levels:</p>
+          <div class="rv" style="display: flex; gap: 28px; justify-content: center; flex-wrap: wrap;">
+            <div class="level-card" style="background: var(--tl-wash-pink);">
+              <svg viewBox="0 0 80 90" style="height: 78px;"><path d="M40 88 L40 48" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 66 C 30 62 24 54 24 46 C 34 48 40 54 40 62" fill="#56C02B"></path></svg>
+              <div class="t" style="color: var(--tl-pink-600);">Beginner</div>
+              <div class="d">This skill is emerging. Practice and support will help it grow.</div>
+            </div>
+            <div class="level-card" style="background: var(--tl-wash-yellow-soft);">
+              <svg viewBox="0 0 80 90" style="height: 78px;"><path d="M40 88 L40 34" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 62 C 30 58 24 50 24 42 C 34 44 40 50 40 58" fill="#56C02B"></path><ellipse cx="40" cy="26" rx="9" ry="13" fill="#FCC30B"></ellipse></svg>
+              <div class="t" style="color: #C79600;">Learner</div>
+              <div class="d">Developing well — showing this skill in many situations.</div>
+            </div>
+            <div class="level-card" style="background: var(--tl-wash-green);">
+              <svg viewBox="0 0 80 90" style="height: 78px;"><path d="M40 88 L40 34" stroke="#348C11" stroke-width="3.5" fill="none" stroke-linecap="round"></path><path d="M40 64 C 30 60 24 52 24 44 C 34 46 40 52 40 60" fill="#56C02B"></path><path d="M40 66 C 50 62 56 54 56 46 C 46 48 40 54 40 62" fill="#56C02B"></path><circle cx="40" cy="20" r="7" fill="#FCC30B"></circle><ellipse cx="40" cy="4" rx="6" ry="9" fill="#26BDE2"></ellipse><ellipse cx="40" cy="36" rx="6" ry="9" fill="#26BDE2"></ellipse><ellipse cx="24" cy="20" rx="9" ry="6" fill="#26BDE2"></ellipse><ellipse cx="56" cy="20" rx="9" ry="6" fill="#26BDE2"></ellipse></svg>
+              <div class="t" style="color: var(--tl-green-600);">Expert</div>
+              <div class="d">Strong and consistent — really shining in this area.</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ═══ 3 · REPORTS — the data funnels into report cards ══════ -->
-<div data-scene data-wash="241,255,236" data-label="Reports" data-pin="fan">
-  <div class="pin-track" data-pin-track style="height: 200vh;">
-    <div class="pin-view">
-      <div class="wrap" style="text-align: center;">
-        <div style="display: flex; justify-content: center; align-items: center; height: min(400px, 42vh); margin-bottom: min(44px, 4vh);">
-          <img data-fan="1" src="assets/report-page-1.png" alt="Tilli parent report — cover page" style="width: 270px; max-height: min(380px, 40vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.14); position: relative; will-change: transform;">
-          <img data-fan="2" src="assets/report-page-3.png" alt="Tilli parent report — skill levels" style="width: 280px; max-height: min(395px, 42vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.18); position: relative; z-index: 2; will-change: transform;">
-          <img data-fan="3" src="assets/report-page-4.png" alt="Tilli parent report — what to do at home" style="width: 270px; max-height: min(380px, 40vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.14); position: relative; will-change: transform;">
+<div class="scene" data-scene data-wash="241,255,236" data-label="Reports" data-pin="fan" style="height: 170vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="wrap" style="text-align: center;">
+          <div style="display: flex; justify-content: center; align-items: center; height: min(380px, 40vh); margin-bottom: min(40px, 4vh);">
+            <img data-fan="1" src="assets/report-page-1.png" alt="Tilli parent report — cover page" style="width: 260px; max-height: min(360px, 38vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.14); position: relative; will-change: transform;">
+            <img data-fan="2" src="assets/report-page-3.png" alt="Tilli parent report — skill levels" style="width: 272px; max-height: min(376px, 40vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.18); position: relative; z-index: 2; will-change: transform;">
+            <img data-fan="3" src="assets/report-page-4.png" alt="Tilli parent report — what to do at home" style="width: 260px; max-height: min(360px, 38vh); object-fit: contain; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 14px 34px rgba(20,20,20,0.14); position: relative; will-change: transform;">
+          </div>
+          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); max-width: 700px; margin: 0 auto 12px;">Teachers share reports <span style="color: var(--tl-green-600);">parents love to receive</span>.</h2>
+          <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 600px; margin: 0 auto min(30px, 3vh);">Term by term: strengths, growth areas, and small things to try at home — for every child.</p>
+          <a href="mailto:kavindya@tillikids.com" class="btn-pink">Book a demo</a>
         </div>
-        <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); max-width: 700px; margin: 0 auto 12px;">Teachers share reports <span style="color: var(--tl-green-600);">parents love to receive</span>.</h2>
-        <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 600px; margin: 0 auto min(30px, 3vh);">Term by term: strengths, growth areas, and small things to try at home — for every child.</p>
-        <a href="mailto:kavindya@tillikids.com" class="btn-pink">Book a demo</a>
       </div>
     </div>
   </div>
@@ -212,25 +255,29 @@
 
 <!-- ═══ 4 · COLLECT — pure visual beat: the data spirals into
              one rotating whole (no words needed) ═════════════ -->
-<div data-scene data-wash="255,246,251" data-label="Collect" style="height: 150vh;"></div>
+<div class="scene" data-scene data-wash="255,246,251" data-label="Collect" style="height: 110vh;"></div>
 
 <!-- ═══ 5 · 3 VIEWS — the circle divides into three ═══════════ -->
-<div data-scene data-wash="217,245,255" data-label="3 views" data-pin="views" style="height: 250vh;">
-  <div class="pin-view">
-    <div class="views-stage">
-      <h2 data-v-h style="font-size: min(36px, 4.6vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); max-width: 680px; will-change: opacity, transform;">Every data point comes from the <span style="color: var(--tl-cyan-700);">3 people who matter most</span>.</h2>
-      <div class="views-row">
-        <div class="view-label">
-          <div class="n" style="color: var(--tl-green-600);">Teacher</div>
-          <div class="d">What they observe in the classroom</div>
-        </div>
-        <div class="view-label">
-          <div class="n" style="color: #C79600;">The student themselves</div>
-          <div class="d">Direct tasks, in the child's own voice</div>
-        </div>
-        <div class="view-label">
-          <div class="n" style="color: var(--tl-cyan-700);">Parents</div>
-          <div class="d">What home sees that school can't</div>
+<div class="scene" data-scene data-wash="217,245,255" data-label="3 views" data-pin="views" style="height: 170vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="views-stage">
+          <h2 data-v-h style="font-size: min(36px, 4.6vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); max-width: 680px; will-change: opacity, transform;">Every data point comes from the <span style="color: var(--tl-cyan-700);">3 people who matter most</span>.</h2>
+          <div class="views-row">
+            <div class="view-label">
+              <div class="n" style="color: var(--tl-green-600);">Teacher</div>
+              <div class="d">What they observe in the classroom</div>
+            </div>
+            <div class="view-label">
+              <div class="n" style="color: #C79600;">The student themselves</div>
+              <div class="d">Direct tasks, in the child's own voice</div>
+            </div>
+            <div class="view-label">
+              <div class="n" style="color: var(--tl-cyan-700);">Parents</div>
+              <div class="d">What home sees that school can't</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -238,131 +285,147 @@
 </div>
 
 <!-- ═══ 6 · MEASURE — the three views weave a DNA of dots ═════ -->
-<div data-scene data-wash="255,255,255" data-label="Measure">
-<section data-dna style="position: relative; height: 340vh;">
-  <div style="position: sticky; top: 0; height: 100vh; overflow: hidden;">
-    <div class="dna-grid">
-      <div style="display: flex; flex-direction: column; gap: 36px;">
-        <div class="eyebrow">MEASURE — 360° VIEW</div>
-        <div class="stage-title">
-          <div style="font-size: 15px; font-weight: 800; color: var(--tl-green-600);">01 — The teacher's strand</div>
-          <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">Structured observation of each child, right in the classroom.</div>
-        </div>
-        <div class="stage-title">
-          <div style="font-size: 15px; font-weight: 800; color: var(--tl-cyan-700);">02 — The parent's strand</div>
-          <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">A short survey on what home sees — behaviour, emotions, relationships.</div>
-        </div>
-        <div class="stage-title">
-          <div style="font-size: 15px; font-weight: 800; color: var(--tl-orange-500);">03 — The child connects them</div>
-          <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">Direct tasks completed by the child tie both strands together.</div>
-        </div>
-      </div>
-      <div class="dna-spacer"><!-- the dotted DNA weaves itself here --></div>
-      <div style="position: relative; height: min(460px, 70vh);">
-        <div class="stage-panel">
-          <div style="background: #fff; border: 2px solid var(--tl-green-500); border-radius: 24px; padding: 26px; width: 100%;">
-            <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-green-600); margin-bottom: 14px;">TEACHER OBSERVATION</div>
-            <div style="font-size: 16px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">"Stays focused during group tasks."</div>
-            <div style="display: flex; gap: 8px; margin-top: 18px;">
-              <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Rarely</span>
-              <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Sometimes</span>
-              <span style="background: var(--tl-green-500); border: 1.5px solid var(--tl-green-500); color: #fff; border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 700;">Often</span>
+<div class="scene" data-scene data-wash="255,255,255" data-label="Measure" data-pin="dna" style="height: 280vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="dna-grid">
+          <div style="display: flex; flex-direction: column; gap: min(36px, 5vh);">
+            <div class="eyebrow">MEASURE — 360° VIEW</div>
+            <div class="stage-title">
+              <div style="font-size: 15px; font-weight: 800; color: var(--tl-green-600);">01 — The teacher's strand</div>
+              <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">Structured observation of each child, right in the classroom.</div>
             </div>
-            <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 18px;">3× a year · 5 minutes per child</div>
-          </div>
-        </div>
-        <div class="stage-panel">
-          <div style="background: #fff; border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: 26px; width: 100%;">
-            <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-cyan-700); margin-bottom: 14px;">PARENT SURVEY</div>
-            <div style="font-size: 16px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">"Talks about their feelings at home."</div>
-            <div style="display: flex; gap: 8px; margin-top: 18px;">
-              <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Never</span>
-              <span style="background: var(--tl-cyan-500); border: 1.5px solid var(--tl-cyan-500); color: #fff; border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 700;">Sometimes</span>
-              <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Often</span>
+            <div class="stage-title">
+              <div style="font-size: 15px; font-weight: 800; color: var(--tl-cyan-700);">02 — The parent's strand</div>
+              <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">A short survey on what home sees — behaviour, emotions, relationships.</div>
             </div>
-            <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 18px;">On WhatsApp · 10 minutes, once a term</div>
+            <div class="stage-title">
+              <div style="font-size: 15px; font-weight: 800; color: var(--tl-orange-500);">03 — The child connects them</div>
+              <div style="font-size: 15px; line-height: 1.55; margin-top: 6px;">Direct tasks completed by the child tie both strands together.</div>
+            </div>
           </div>
-        </div>
-        <div class="stage-panel">
-          <div style="background: #fff; border: 2px solid var(--tl-orange-500); border-radius: 24px; padding: 20px; width: 100%; display: flex; gap: 18px; align-items: center;">
-            <img src="uploads/assets_assessment-1785392873763.png" alt="Tilli child task — breathing activity" style="width: 130px; border-radius: 14px;">
-            <div>
-              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-orange-500); margin-bottom: 10px;">DIRECT-FROM-CHILD TASK</div>
-              <div style="font-size: 15px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">Play-based tasks the child completes themselves.</div>
-              <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 10px;">Emotion Matching · Hearts &amp; Flowers · Memory Game</div>
+          <div class="dna-spacer"><!-- the dotted DNA weaves itself here --></div>
+          <div style="position: relative; height: min(440px, 62vh);">
+            <div class="stage-panel">
+              <div style="background: #fff; border: 2px solid var(--tl-green-500); border-radius: 24px; padding: 26px; width: 100%;">
+                <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-green-600); margin-bottom: 14px;">TEACHER OBSERVATION</div>
+                <div style="font-size: 16px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">"Stays focused during group tasks."</div>
+                <div style="display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap;">
+                  <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Rarely</span>
+                  <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Sometimes</span>
+                  <span style="background: var(--tl-green-500); border: 1.5px solid var(--tl-green-500); color: #fff; border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 700;">Often</span>
+                </div>
+                <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 18px;">3× a year · 5 minutes per child</div>
+              </div>
+            </div>
+            <div class="stage-panel">
+              <div style="background: #fff; border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: 26px; width: 100%;">
+                <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-cyan-700); margin-bottom: 14px;">PARENT SURVEY</div>
+                <div style="font-size: 16px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">"Talks about their feelings at home."</div>
+                <div style="display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap;">
+                  <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Never</span>
+                  <span style="background: var(--tl-cyan-500); border: 1.5px solid var(--tl-cyan-500); color: #fff; border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 700;">Sometimes</span>
+                  <span style="border: 1.5px solid var(--tl-line-200); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600;">Often</span>
+                </div>
+                <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 18px;">On WhatsApp · 10 minutes, once a term</div>
+              </div>
+            </div>
+            <div class="stage-panel">
+              <div style="background: #fff; border: 2px solid var(--tl-orange-500); border-radius: 24px; padding: 20px; width: 100%; display: flex; gap: 18px; align-items: center;">
+                <img src="uploads/assets_assessment-1785392873763.png" alt="Tilli child task — breathing activity" style="width: 130px; border-radius: 14px;">
+                <div>
+                  <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--tl-orange-500); margin-bottom: 10px;">DIRECT-FROM-CHILD TASK</div>
+                  <div style="font-size: 15px; font-weight: 700; color: var(--tl-ink-800); line-height: 1.45;">Play-based tasks the child completes themselves.</div>
+                  <div style="font-size: 13px; color: var(--tl-ink-300); margin-top: 10px;">Emotion Matching · Hearts &amp; Flowers · Memory Game</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
   </div>
-</section>
 </div>
 
 <!-- ═══ 7 · 12 SKILLS — the DNA zooms aside for the grid ══════ -->
-<div data-scene data-wash="217,245,255" data-label="12 skills" data-pin="skills" id="skills" style="height: 320vh;">
-  <div class="pin-view" style="flex-direction: column; gap: min(26px, 3vh);">
-    <div style="text-align: center; padding: 0 24px;">
-      <h2 style="font-size: min(42px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 auto 8px;">Get a <span style="color: var(--tl-pink-600);">360° view</span> of the student.</h2>
-      <p style="font-size: min(18px, 2.4vh); line-height: 1.5; max-width: 620px; margin: 0 auto;">12 foundational skills — measured from every side, term after term.</p>
-    </div>
-    <div class="skills-wrap">
-      <div class="skills-grid">
-        <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">01 · Attention</div><div class="d">Focusing on relevant information and sustaining it on a task.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">02 · Working Memory</div><div class="d">Holding and using information over short periods.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">03 · Cognitive Flexibility</div><div class="d">Shifting between tasks, perspectives, and strategies.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">04 · Inhibition — Distraction</div><div class="d">Resisting distractions to stay on task.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">05 · Inhibition — Response</div><div class="d">Pausing and thinking before acting.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">06 · Planning &amp; Organisation</div><div class="d">Setting goals, planning steps, and structuring tasks.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">07 · Emotion Awareness</div><div class="d">Recognising and understanding one's own emotions.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">08 · Emotion Regulation</div><div class="d">Managing and responding to emotions appropriately.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">09 · Empathy</div><div class="d">Understanding and sharing the feelings of others.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">10 · Relationship Skills</div><div class="d">Building and maintaining positive interactions with others.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">11 · Metacognition</div><div class="d">Reflecting on and understanding one's own thinking.</div></div>
-        <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">12 · Critical Thinking</div><div class="d">Analysing and evaluating information to form judgments.</div></div>
+<div class="scene" data-scene data-wash="217,245,255" data-label="12 skills" data-pin="skills" id="skills" style="height: 210vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div style="display: flex; flex-direction: column; gap: min(26px, 3vh);">
+          <div style="text-align: center; padding: 0 24px;">
+            <h2 style="font-size: min(42px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 auto 8px;">Get a <span style="color: var(--tl-pink-600);">360° view</span> of the student.</h2>
+            <p style="font-size: min(18px, 2.4vh); line-height: 1.5; max-width: 620px; margin: 0 auto;">12 foundational skills — measured from every side, term after term.</p>
+          </div>
+          <div class="skills-wrap">
+            <div class="skills-grid">
+              <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">01 · Attention</div><div class="d">Focusing on relevant information and sustaining it on a task.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">02 · Working Memory</div><div class="d">Holding and using information over short periods.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">03 · Cognitive Flexibility</div><div class="d">Shifting between tasks, perspectives, and strategies.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">04 · Inhibition — Distraction</div><div class="d">Resisting distractions to stay on task.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">05 · Inhibition — Response</div><div class="d">Pausing and thinking before acting.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">06 · Planning &amp; Organisation</div><div class="d">Setting goals, planning steps, and structuring tasks.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">07 · Emotion Awareness</div><div class="d">Recognising and understanding one's own emotions.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">08 · Emotion Regulation</div><div class="d">Managing and responding to emotions appropriately.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">09 · Empathy</div><div class="d">Understanding and sharing the feelings of others.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">10 · Relationship Skills</div><div class="d">Building and maintaining positive interactions with others.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">11 · Metacognition</div><div class="d">Reflecting on and understanding one's own thinking.</div></div>
+              <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">12 · Critical Thinking</div><div class="d">Analysing and evaluating information to form judgments.</div></div>
+            </div>
+            <div class="helix-side"><!-- the DNA rotates here, zoomed out --></div>
+          </div>
+        </div>
       </div>
-      <div class="helix-side"><!-- the DNA rotates here, zoomed out --></div>
     </div>
   </div>
 </div>
 
 <!-- ═══ 8 · ON TRACK — the dots become children ═══════════════ -->
-<div data-scene data-wash="241,255,236" data-label="On track" data-pin="state" style="height: 200vh;">
-  <div class="pin-view">
-    <div class="wrap" style="text-align: center; display: flex; flex-direction: column; height: 100%; justify-content: space-between; padding-top: 10vh; padding-bottom: 10vh;">
-      <div>
-        <h2 data-st-h style="font-size: min(48px, 5.6vh); font-weight: 800; letter-spacing: -0.03em; line-height: 1.14; color: var(--tl-ink-900); max-width: 820px; margin: 0 auto 14px; will-change: transform, opacity;">Every child walks into middle school <span style="color: var(--tl-green-600);">developmentally on track</span>.</h2>
-        <p data-st-p style="font-size: min(19px, 2.5vh); line-height: 1.55; max-width: 640px; margin: 0 auto; will-change: opacity;">Not a promise — a measurement. See exactly where each child stands, term by term, and what to do about it.</p>
-      </div>
-      <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
-        <span data-pop style="border: 2px solid var(--tl-green-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">12 skills measured</span>
-        <span data-pop style="border: 2px solid var(--tl-cyan-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">3× a year</span>
-        <span data-pop style="border: 2px solid var(--tl-pink-400); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">2,895 data points per child</span>
-        <span data-pop style="border: 2px solid var(--tl-yellow-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">Growth visible, not guessed</span>
+<div class="scene" data-scene data-wash="241,255,236" data-label="On track" data-pin="state" style="height: 170vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="wrap" style="text-align: center; display: flex; flex-direction: column; gap: min(56px, 9vh);">
+          <div>
+            <h2 data-st-h style="font-size: min(48px, 5.6vh); font-weight: 800; letter-spacing: -0.03em; line-height: 1.14; color: var(--tl-ink-900); max-width: 820px; margin: 0 auto 14px; will-change: transform, opacity;">Every child walks into middle school <span style="color: var(--tl-green-600);">developmentally on track</span>.</h2>
+            <p data-st-p style="font-size: min(19px, 2.5vh); line-height: 1.55; max-width: 640px; margin: 0 auto; will-change: opacity;">Not a promise — a measurement. See exactly where each child stands, term by term, and what to do about it.</p>
+          </div>
+          <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+            <span data-pop style="border: 2px solid var(--tl-green-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">12 skills measured</span>
+            <span data-pop style="border: 2px solid var(--tl-cyan-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">3× a year</span>
+            <span data-pop style="border: 2px solid var(--tl-pink-400); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">2,895 data points per child</span>
+            <span data-pop style="border: 2px solid var(--tl-yellow-500); border-radius: 999px; padding: 12px 26px; font-size: 15px; font-weight: 700; color: var(--tl-ink-800); background: rgba(255,255,255,0.8); will-change: transform, opacity;">Growth visible, not guessed</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ═══ 9 · ASK-TILLI ═════════════════════════════════════════ -->
-<div data-scene data-wash="255,246,251" data-label="Ask-Tilli" data-pin="ai" style="height: 220vh;">
-  <div class="pin-view">
-    <div class="wrap" style="text-align: center;">
-      <div class="eyebrow">ASK</div>
-      <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 760px;">Any AI can answer. <span style="color: var(--tl-cyan-700);">Only Tilli knows your student.</span></h2>
-      <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 620px; margin: 0 auto min(40px, 4vh);">The same question, asked two ways. One answer is for any child. One is for <em>this</em> child.</p>
-      <div style="display: flex; gap: 32px; justify-content: center; align-items: stretch; flex-wrap: wrap; text-align: left;">
-        <div style="flex: 1; min-width: 320px; max-width: 470px; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); box-shadow: 0 2px 10px rgba(20,20,20,0.06);">
-          <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-ink-300); margin-bottom: 6px;">A GENERIC AI CHATBOT</div>
-          <div style="align-self: flex-end; background: var(--tl-surface-100); color: var(--tl-ink-700); border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help a 7-year-old who keeps losing focus in class?</div>
-          <div style="align-self: flex-start; background: var(--tl-surface-100); color: var(--tl-ink-450); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px;">Great question! Here are 10 general strategies: minimise distractions, take movement breaks, use positive reinforcement, try a reward chart…</div>
-          <div style="font-size: 13.5px; font-weight: 600; color: var(--tl-ink-450); margin-top: auto; padding-top: 14px;">Advice for the average child. It has never met yours.</div>
-        </div>
-        <div data-ai-card style="flex: 1; min-width: 320px; max-width: 470px; background: var(--tl-wash-cyan); border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); will-change: transform, opacity;">
-          <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-cyan-700); margin-bottom: 6px;">ASK-TILLI · KNOWS DHRUV'S DATA</div>
-          <div style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help Dhruv focus in class?</div>
-          <div data-ai-ans style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px; will-change: transform, opacity;">Dhruv's attention is at <b>Learner</b>, but his working memory is <b>Expert</b> — and his parents report the same pattern at home. Start group tasks with the Week 14 attention warm-up, then let him lead the recall step.</div>
-          <div data-ai-foot style="font-size: 13.5px; font-weight: 700; color: var(--tl-cyan-700); margin-top: auto; padding-top: 14px;">Grounded in 2,895 data points on this one child.</div>
+<div class="scene" data-scene data-wash="255,246,251" data-label="Ask-Tilli" data-pin="ai" style="height: 190vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div class="wrap" style="text-align: center;">
+          <div class="eyebrow">ASK</div>
+          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 760px;">Any AI can answer. <span style="color: var(--tl-cyan-700);">Only Tilli knows your student.</span></h2>
+          <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 620px; margin: 0 auto min(40px, 4vh);">The same question, asked two ways. One answer is for any child. One is for <em>this</em> child.</p>
+          <div style="display: flex; gap: 32px; justify-content: center; align-items: stretch; flex-wrap: wrap; text-align: left;">
+            <div style="flex: 1; min-width: 300px; max-width: 470px; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); box-shadow: 0 2px 10px rgba(20,20,20,0.06);">
+              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-ink-300); margin-bottom: 6px;">A GENERIC AI CHATBOT</div>
+              <div style="align-self: flex-end; background: var(--tl-surface-100); color: var(--tl-ink-700); border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help a 7-year-old who keeps losing focus in class?</div>
+              <div style="align-self: flex-start; background: var(--tl-surface-100); color: var(--tl-ink-450); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px;">Great question! Here are 10 general strategies: minimise distractions, take movement breaks, use positive reinforcement, try a reward chart…</div>
+              <div style="font-size: 13.5px; font-weight: 600; color: var(--tl-ink-450); margin-top: auto; padding-top: 14px;">Advice for the average child. It has never met yours.</div>
+            </div>
+            <div data-ai-card style="flex: 1; min-width: 300px; max-width: 470px; background: var(--tl-wash-cyan); border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); will-change: transform, opacity;">
+              <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-cyan-700); margin-bottom: 6px;">ASK-TILLI · KNOWS DHRUV'S DATA</div>
+              <div style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help Dhruv focus in class?</div>
+              <div data-ai-ans style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px; will-change: opacity;">Dhruv's attention is at <b>Learner</b>, but his working memory is <b>Expert</b> — and his parents report the same pattern at home. Start group tasks with the Week 14 attention warm-up, then let him lead the recall step.</div>
+              <div data-ai-foot style="font-size: 13.5px; font-weight: 700; color: var(--tl-cyan-700); margin-top: auto; padding-top: 14px;">Grounded in 2,895 data points on this one child.</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -370,142 +433,174 @@
 </div>
 
 <!-- ═══ 10 · IMPACT ═══════════════════════════════════════════ -->
-<div data-scene data-wash="255,246,168" data-label="Impact" id="impact">
-<section style="padding: 100px 24px;">
-  <div style="max-width: 1140px; margin: 0 auto; text-align: center;">
-    <h2 class="rv" style="font-size: 42px; font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 0 44px;"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
-    <div class="rv" style="display: flex; gap: 64px; justify-content: center; flex-wrap: wrap; margin-bottom: 52px;">
-      <div><div style="font-size: 54px; font-weight: 800; color: var(--tl-pink-600); letter-spacing: -0.02em;">12,510</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">children reached</div></div>
-      <div><div style="font-size: 54px; font-weight: 800; color: var(--tl-cyan-700); letter-spacing: -0.02em;">4,000+</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">educators trained</div></div>
-      <div><div style="font-size: 54px; font-weight: 800; color: var(--tl-green-600); letter-spacing: -0.02em;">2 → 15</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">sections to branches, one school, one year</div></div>
-      <div><div style="font-size: 54px; font-weight: 800; color: var(--tl-orange-500); letter-spacing: -0.02em;">95%</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">of teachers rate training highly effective</div></div>
-    </div>
-    <div class="rv" style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-bottom: 52px;">
-      <img src="assets/ds/classroom-training-1.jpeg" alt="Tilli teacher training" style="width: 250px; height: 180px; object-fit: cover; border-radius: 18px;">
-      <img src="assets/ds/classroom-training-2.jpeg" alt="Teachers working with Tilli materials" style="width: 250px; height: 180px; object-fit: cover; border-radius: 18px; margin-top: 22px;">
-      <img src="assets/ds/stanford-campus.jpeg" alt="Stanford campus" style="width: 250px; height: 180px; object-fit: cover; border-radius: 18px;">
-      <img src="assets/ds/teaching-kit.png" alt="Tilli SEL Teaching Kit" style="width: 250px; height: 180px; object-fit: contain; background: #fff; border-radius: 18px; margin-top: 22px;">
-    </div>
-    <div class="rv" style="max-width: 720px; margin: 0 auto; background: #fff; border: 2px solid var(--tl-green-500); border-radius: 24px; padding: 36px 44px; text-align: left; display: flex; gap: 22px;">
-      <img src="assets/ds/quote-green.png" alt="" style="width: 40px; height: 32px; flex-shrink: 0;">
-      <div>
-        <div style="font-size: 21px; font-weight: 600; font-style: italic; color: var(--tl-ink-800); line-height: 1.5;">Every morning the children ask their teachers: are we doing a Tilli activity today?</div>
-        <div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 14px;">Mr. Upali Gunasekara · Principal, Polymath International School</div>
+<div class="scene" data-scene data-wash="255,246,168" data-label="Impact" id="impact" style="height: 230vh;">
+  <div class="stage">
+    <div class="step">
+      <div class="step-in">
+        <div style="max-width: 1140px; margin: 0 auto; text-align: center; padding: 0 24px;">
+          <h2 class="rv" style="font-size: min(42px, 5.2vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 0 min(48px, 6vh);"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
+          <div class="rv" style="display: flex; gap: 64px; justify-content: center; flex-wrap: wrap;">
+            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-pink-600); letter-spacing: -0.02em;">12,510</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">children reached</div></div>
+            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-cyan-700); letter-spacing: -0.02em;">4,000+</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">educators trained</div></div>
+            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-green-600); letter-spacing: -0.02em;">2 → 15</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">sections to branches, one school, one year</div></div>
+            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-orange-500); letter-spacing: -0.02em;">95%</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">of teachers rate training highly effective</div></div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="rv" style="font-size: 13px; font-weight: 600; color: var(--tl-ink-450); margin-top: 44px;">HundrED Global Collection 2026 · QS Reimagine Education Gold Winner · GESAwards Special Track Winner · UNICEF Venture Fund</div>
+    <div class="step">
+      <div class="step-in">
+        <div style="max-width: 1140px; margin: 0 auto; text-align: center; padding: 0 24px;">
+          <div class="rv" style="display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-bottom: min(46px, 5vh);">
+            <img src="assets/ds/classroom-training-1.jpeg" alt="Tilli teacher training" style="width: 230px; height: 166px; object-fit: cover; border-radius: 18px;">
+            <img src="assets/ds/classroom-training-2.jpeg" alt="Teachers working with Tilli materials" style="width: 230px; height: 166px; object-fit: cover; border-radius: 18px; margin-top: 22px;">
+            <img src="assets/ds/stanford-campus.jpeg" alt="Stanford campus" style="width: 230px; height: 166px; object-fit: cover; border-radius: 18px;">
+            <img src="assets/ds/teaching-kit.png" alt="Tilli SEL Teaching Kit" style="width: 230px; height: 166px; object-fit: contain; background: #fff; border-radius: 18px; margin-top: 22px;">
+          </div>
+          <div class="rv" style="max-width: 720px; margin: 0 auto; background: #fff; border: 2px solid var(--tl-green-500); border-radius: 24px; padding: 32px 40px; text-align: left; display: flex; gap: 22px;">
+            <img src="assets/ds/quote-green.png" alt="" style="width: 40px; height: 32px; flex-shrink: 0;">
+            <div>
+              <div style="font-size: min(21px, 2.8vh); font-weight: 600; font-style: italic; color: var(--tl-ink-800); line-height: 1.5;">Every morning the children ask their teachers: are we doing a Tilli activity today?</div>
+              <div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 14px;">Mr. Upali Gunasekara · Principal, Polymath International School</div>
+            </div>
+          </div>
+          <div class="rv" style="font-size: 13px; font-weight: 600; color: var(--tl-ink-450); margin-top: min(40px, 4.5vh);">HundrED Global Collection 2026 · QS Reimagine Education Gold Winner · GESAwards Special Track Winner · UNICEF Venture Fund</div>
+        </div>
+      </div>
+    </div>
   </div>
-</section>
 </div>
 
-<!-- ═══ 11 · JOURNEY ══════════════════════════════════════════ -->
-<div data-scene data-wash="255,255,255" data-label="Journey">
-<section data-journey style="padding: 110px 24px 60px;">
-  <div style="max-width: 1140px; margin: 0 auto;">
-    <div style="text-align: center; margin-bottom: 70px;">
-      <div class="rv eyebrow">WHAT PARTNER SCHOOLS DID</div>
-      <h2 class="rv" style="font-size: 42px; font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 16px auto 0; max-width: 640px;">Measure. Ask. <span style="color: var(--tl-orange-500);">Intervene.</span></h2>
+<!-- ═══ 11 · JOURNEY — one dotted spine, cards fade through ═══ -->
+<div class="scene" data-scene data-wash="255,255,255" data-label="Journey" data-pin="journey" style="height: 330vh;">
+  <div class="stage j-stage">
+    <div class="stage-deco">
+      <div class="j-deco">
+        <div>
+          <div class="eyebrow">WHAT PARTNER SCHOOLS DID</div>
+          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px 0 0;">Measure. Ask. <span style="color: var(--tl-orange-500);">Intervene.</span></h2>
+        </div>
+        <svg viewBox="0 0 120 560" style="width: 120px; height: min(46vh, 380px);" preserveAspectRatio="xMidYMid meet">
+          <path data-j-path d="M60 20 C 8 130 112 200 60 290 C 8 380 112 450 60 540" fill="none" stroke="#DDE1E8" stroke-width="3" stroke-dasharray="1 10" stroke-linecap="round"></path>
+          <circle data-j-ball cx="0" cy="0" r="13" fill="var(--tl-yellow-500)" stroke="var(--tl-ink-900)" stroke-width="2.5"></circle>
+        </svg>
+      </div>
     </div>
-    <div style="position: relative;">
-      <svg viewBox="0 0 180 1300" style="position: absolute; left: 0; top: 0; width: 180px; height: 1300px;" preserveAspectRatio="xMidYMin meet">
-        <path data-j-path d="M90 10 C 30 200 150 300 90 430 C 30 560 150 660 90 790 C 30 920 150 1020 90 1150 L 90 1290" fill="none" stroke="#DDE1E8" stroke-width="3" stroke-dasharray="1 10" stroke-linecap="round"></path>
-        <circle data-j-ball cx="0" cy="0" r="13" fill="var(--tl-yellow-500)" stroke="var(--tl-ink-900)" stroke-width="2.5"></circle>
-      </svg>
-      <div class="j-list" style="margin-left: 230px; display: flex; flex-direction: column; gap: 70px;">
-        <div class="rv j-card" style="border: 2px solid var(--tl-green-500);">
+
+    <div class="step">
+      <div class="step-in">
+        <div class="j-card" style="border: 2px solid var(--tl-green-500);">
           <div style="flex: 1;">
             <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 16px;">
-              <div style="width: 56px; height: 56px; border-radius: 50%; background: var(--tl-green-500); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-clipboard-check.png" alt="" style="width: 28px; height: 28px;"></div>
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: var(--tl-green-500); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-clipboard-check.png" alt="" style="width: 26px; height: 26px;"></div>
               <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.18em; color: var(--tl-green-600);">MEASURE</div>
             </div>
-            <div style="font-size: 26px; font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">Start with a real baseline</div>
-            <p style="font-size: 16.5px; line-height: 1.6; margin: 12px 0 0;">In the first weeks, every child is assessed across all 12 skills — teacher observation, parent report, and direct tasks. Repeated three times a year, so growth is visible, not guessed.</p>
+            <div style="font-size: min(26px, 3.4vh); font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">Start with a real baseline</div>
+            <p style="font-size: min(16.5px, 2.3vh); line-height: 1.6; margin: 12px 0 0;">In the first weeks, every child is assessed across all 12 skills — teacher observation, parent report, and direct tasks. Repeated three times a year, so growth is visible, not guessed.</p>
             <div style="font-size: 14px; font-weight: 700; color: var(--tl-pink-600); margin-top: 14px;">2,895 data points per child.</div>
           </div>
-          <img src="assets/report-page-3.png" alt="Skill levels from a Tilli report" style="width: 210px; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 8px 22px rgba(20,20,20,0.10);">
+          <img src="assets/report-page-3.png" alt="Skill levels from a Tilli report" style="width: 190px; border-radius: 14px; border: 1px solid var(--tl-line-200); box-shadow: 0 8px 22px rgba(20,20,20,0.10);">
         </div>
-        <div class="rv j-card" style="border: 2px solid var(--tl-cyan-500);">
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-in">
+        <div class="j-card" style="border: 2px solid var(--tl-cyan-500);">
           <div style="flex: 1;">
             <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 16px;">
-              <div style="width: 56px; height: 56px; border-radius: 50%; background: var(--tl-cyan-400); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-robot.png" alt="" style="width: 28px; height: 28px;"></div>
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: var(--tl-cyan-400); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-robot.png" alt="" style="width: 26px; height: 26px;"></div>
               <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.18em; color: var(--tl-cyan-700);">ASK</div>
             </div>
-            <div style="font-size: 26px; font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">Ask-Tilli, on WhatsApp</div>
-            <p style="font-size: 16.5px; line-height: 1.6; margin: 12px 0 0;">Teachers ask about a child or a class and get lesson plans, behaviour guidance, and that child's own data — in the middle of a school day, in seconds.</p>
+            <div style="font-size: min(26px, 3.4vh); font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">Ask-Tilli, on WhatsApp</div>
+            <p style="font-size: min(16.5px, 2.3vh); line-height: 1.6; margin: 12px 0 0;">Teachers ask about a child or a class and get lesson plans, behaviour guidance, and that child's own data — in the middle of a school day, in seconds.</p>
           </div>
-          <div style="width: 280px; background: var(--tl-wash-cyan); border: 4px solid var(--tl-cyan-500); border-radius: 24px; padding: 18px; display: flex; flex-direction: column; gap: 10px;">
-            <div style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 210px;">How do I support Dhruv's focus during group work?</div>
-            <div style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 220px;">Dhruv's attention is at <b>Learner</b>. Try a 2-minute attention warm-up before the task — here's one from Week 14.</div>
+          <div style="width: 250px; background: var(--tl-wash-cyan); border: 4px solid var(--tl-cyan-500); border-radius: 24px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 200px;">How do I support Dhruv's focus during group work?</div>
+            <div style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 210px;">Dhruv's attention is at <b>Learner</b>. Try a 2-minute attention warm-up before the task — here's one from Week 14.</div>
             <div style="font-size: 11px; font-weight: 700; color: var(--tl-cyan-700); text-align: center; margin-top: 4px;">ASK-TILLI · WHATSAPP</div>
           </div>
         </div>
-        <div class="rv j-card" style="border: 2px solid var(--tl-yellow-500);">
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-in">
+        <div class="j-card" style="border: 2px solid var(--tl-yellow-500);">
           <div style="flex: 1;">
             <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 16px;">
-              <div style="width: 56px; height: 56px; border-radius: 50%; background: var(--tl-yellow-400); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-book.png" alt="" style="width: 28px; height: 28px;"></div>
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: var(--tl-yellow-400); display: flex; align-items: center; justify-content: center;"><img src="assets/ds/icon-book.png" alt="" style="width: 26px; height: 26px;"></div>
               <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.18em; color: #C79600;">INTERVENE</div>
             </div>
-            <div style="font-size: 26px; font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">A curriculum, not a workshop</div>
-            <p style="font-size: 16.5px; line-height: 1.6; margin: 12px 0 0;">36 weeks of play-based lessons for every class — Feelings Time workbooks, Teacher's Guidebooks, and the SEL Teaching Kit. 30 minutes a week. No new period, no extra prep.</p>
+            <div style="font-size: min(26px, 3.4vh); font-weight: 800; color: var(--tl-ink-900); letter-spacing: -0.01em;">A curriculum, not a workshop</div>
+            <p style="font-size: min(16.5px, 2.3vh); line-height: 1.6; margin: 12px 0 0;">36 weeks of play-based lessons for every class — Feelings Time workbooks, Teacher's Guidebooks, and the SEL Teaching Kit. 30 minutes a week. No new period, no extra prep.</p>
           </div>
           <div style="display: flex; gap: 12px; align-items: flex-end;">
-            <img src="assets/ds/feelings-time-1.png" alt="Feelings Time workbook" style="width: 110px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
-            <img src="assets/ds/guidebook-l1.png" alt="Teacher's Guidebook" style="width: 110px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12); margin-bottom: 16px;">
-            <img src="assets/ds/my-first-feelings-book.png" alt="My First Feelings Book" style="width: 110px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
+            <img src="assets/ds/feelings-time-1.png" alt="Feelings Time workbook" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
+            <img src="assets/ds/guidebook-l1.png" alt="Teacher's Guidebook" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12); margin-bottom: 16px;">
+            <img src="assets/ds/my-first-feelings-book.png" alt="My First Feelings Book" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-in">
+        <div style="text-align: center;">
+          <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap;" id="tabs">
+            <span data-tab="0" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Measure</span>
+            <span data-tab="1" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Ask</span>
+            <span data-tab="2" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Intervene</span>
+          </div>
+          <div style="background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: 36px 40px; min-height: 130px; text-align: left;">
+            <div data-tabpane style="font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Baseline → midline → endline. 12 skills, three angles, three times a year — and dashboards update the moment data lands.</div>
+            <div data-tabpane style="display: none; font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Ask-Tilli answers teachers' day-to-day questions with each child's own data — lesson plans, behaviour guidance, class summaries. On WhatsApp, in seconds.</div>
+            <div data-tabpane style="display: none; font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">A 36-week play-based curriculum mapped to the same 12 skills you measure — 30 minutes a week, workbooks and guidebooks included.</div>
           </div>
         </div>
       </div>
     </div>
   </div>
-</section>
-<section style="padding: 40px 24px 110px;">
-  <div style="max-width: 820px; margin: 0 auto; text-align: center;">
-    <div class="rv" style="display: flex; gap: 12px; justify-content: center; margin-bottom: 30px;" id="tabs">
-      <span data-tab="0" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Measure</span>
-      <span data-tab="1" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Ask</span>
-      <span data-tab="2" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Intervene</span>
-    </div>
-    <div style="background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: 44px 48px; min-height: 130px;">
-      <div data-tabpane style="font-size: 20px; font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Baseline → midline → endline. 12 skills, three angles, three times a year — and dashboards update the moment data lands.</div>
-      <div data-tabpane style="display: none; font-size: 20px; font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Ask-Tilli answers teachers' day-to-day questions with each child's own data — lesson plans, behaviour guidance, class summaries. On WhatsApp, in seconds.</div>
-      <div data-tabpane style="display: none; font-size: 20px; font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">A 36-week play-based curriculum mapped to the same 12 skills you measure — 30 minutes a week, workbooks and guidebooks included.</div>
-    </div>
-  </div>
-</section>
 </div>
 
 <!-- ═══ 12 · LET'S TALK ═══════════════════════════════════════ -->
-<div data-scene data-wash="255,220,240" data-label="Let's talk">
-<section style="padding: 60px 24px 110px;">
-  <div style="max-width: 1140px; margin: 0 auto; background: var(--tl-pink-600); border-radius: 40px; padding: 72px 64px; display: flex; align-items: center; gap: 48px; position: relative; overflow: hidden; flex-wrap: wrap;">
-    <div style="flex: 1; min-width: 280px;">
-      <h2 style="font-size: 42px; font-weight: 800; letter-spacing: -0.02em; color: #fff; line-height: 1.15; margin: 0 0 18px; max-width: 620px;">Let Tilli help you understand your students' development better.</h2>
-      <p style="font-size: 18px; line-height: 1.6; color: rgba(255,255,255,0.92); max-width: 560px; margin: 0 0 32px;">A 30-minute conversation with our founding team — about your school, your children, and what's possible.</p>
-      <a href="mailto:kavindya@tillikids.com" style="background: #fff; color: var(--tl-pink-600); font-weight: 800; font-size: 17px; padding: 16px 40px; border-radius: 999px; display: inline-block;">Book a demo</a>
-      <div style="font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.85); margin-top: 18px;">kavindya@tillikids.com</div>
+<div class="scene" data-scene data-wash="255,220,240" data-label="Let's talk" style="height: 200vh;">
+  <div class="stage">
+    <div class="step" style="padding-bottom: 16vh;">
+      <div class="step-in">
+        <div style="max-width: 1140px; margin: 0 auto; background: var(--tl-pink-600); border-radius: 40px; padding: min(64px, 7vh) min(64px, 6vw); display: flex; align-items: center; gap: 48px; position: relative; overflow: hidden; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 280px;">
+            <h2 style="font-size: min(42px, 5.2vh); font-weight: 800; letter-spacing: -0.02em; color: #fff; line-height: 1.15; margin: 0 0 18px; max-width: 620px;">Let Tilli help you understand your students' development better.</h2>
+            <p style="font-size: min(18px, 2.5vh); line-height: 1.6; color: rgba(255,255,255,0.92); max-width: 560px; margin: 0 0 32px;">A 30-minute conversation with our founding team — about your school, your children, and what's possible.</p>
+            <a href="mailto:kavindya@tillikids.com" style="background: #fff; color: var(--tl-pink-600); font-weight: 800; font-size: 17px; padding: 16px 40px; border-radius: 999px; display: inline-block;">Book a demo</a>
+            <div style="font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.85); margin-top: 18px;">kavindya@tillikids.com</div>
+          </div>
+          <img src="assets/ds/tilli-girl-waving.png" alt="Tilli character waving" style="width: min(220px, 22vw); flex-shrink: 0;">
+        </div>
+      </div>
     </div>
-    <img src="assets/ds/tilli-girl-waving.png" alt="Tilli character waving" style="width: 240px; flex-shrink: 0;">
+    <div class="stage-deco">
+      <div class="foot">
+        <div style="max-width: 1140px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 18px;">
+          <div style="display: flex; align-items: center; gap: 16px;">
+            <img src="assets/ds/tilli-logo.png" alt="tilli" style="height: 26px; width: auto;">
+            <span style="font-size: 14px; font-style: italic; color: var(--tl-ink-450);">Developmentally on track by 10.</span>
+          </div>
+          <div style="display: flex; gap: 26px; font-size: 14px; font-weight: 600; flex-wrap: wrap;">
+            <a href="#how" style="color: var(--tl-ink-600);">How it works</a>
+            <a href="#skills" style="color: var(--tl-ink-600);">The 12 skills</a>
+            <a href="#impact" style="color: var(--tl-ink-600);">Impact</a>
+            <a href="mailto:kavindya@tillikids.com" style="color: var(--tl-ink-600);">Contact</a>
+          </div>
+          <div style="font-size: 13px; color: var(--tl-ink-300);">© Tilli Kids Inc. · www.tillikids.com</div>
+        </div>
+      </div>
+    </div>
   </div>
-</section>
-<footer style="border-top: 1px solid var(--tl-line-200); padding: 48px 24px; background: #fff;">
-  <div style="max-width: 1140px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 24px;">
-    <div style="display: flex; align-items: center; gap: 16px;">
-      <img src="assets/ds/tilli-logo.png" alt="tilli" style="height: 28px; width: auto;">
-      <span style="font-size: 14px; font-style: italic; color: var(--tl-ink-450);">Developmentally on track by 10.</span>
-    </div>
-    <div style="display: flex; gap: 26px; font-size: 14px; font-weight: 600;">
-      <a href="#how" style="color: var(--tl-ink-600);">How it works</a>
-      <a href="#skills" style="color: var(--tl-ink-600);">The 12 skills</a>
-      <a href="#impact" style="color: var(--tl-ink-600);">Impact</a>
-      <a href="mailto:kavindya@tillikids.com" style="color: var(--tl-ink-600);">Contact</a>
-    </div>
-    <div style="font-size: 13px; color: var(--tl-ink-300);">© Tilli Kids Inc. · www.tillikids.com</div>
-  </div>
-</footer>
 </div>
 
 </div><!-- /content -->
 
-<script type="module" src="js/main.js?v=3"></script>
+<script type="module" src="js/main.js?v=4"></script>
 </body>
 </html>

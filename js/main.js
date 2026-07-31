@@ -19,31 +19,86 @@ const smooth = (t) => t * t * (3 - 2 * t);
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+/* ═══════════════════════════════════════════════════════════════════
+   THE STAGE SYSTEM — a true single page
+
+   No section ever travels. Each `.scene` is an empty scroll spacer that
+   owns a slice of the scrollbar; its `.stage` is position:fixed at the
+   viewport and only ever changes opacity. Sections dissolve into each
+   other through the dot field instead of sliding up from the bottom.
+
+   Tunables:
+     FADE_LEN   how long (in scene-units) a stage takes to fade in/out
+     FADE_OVER  how far the incoming stage's fade starts before the
+                outgoing one has finished — the size of the dissolve
+     STEP_FADE  same, for `.step` sub-panels inside one stage
+     MORPH_AT   the point in a scene (0..1) where the dots stop holding
+                their formation and start morphing towards the next
+     FIT_PAD    px of breathing room kept around a step when it has to
+                be scaled down to fit a short viewport
+   ═══════════════════════════════════════════════════════════════════ */
+const FADE_LEN = 0.12;
+const FADE_OVER = 0.04;
+const STEP_FADE = 0.22;
+const MORPH_AT = 0.68;
+const FIT_PAD = 34;
+
 /* ── Scene registry (DOM order = station order) ───────────────────── */
 const sceneEls = Array.from(document.querySelectorAll('[data-scene]'));
-const scenes = sceneEls.map((el) => ({
-  el,
-  wash: (el.dataset.wash || '255,255,255').split(',').map(Number),
-  label: el.dataset.label || '',
-  pin: el.dataset.pin || null,
-  track: el.querySelector('[data-pin-track]'),
-  t: null,
-}));
+const scenes = sceneEls.map((el) => {
+  const steps = Array.from(el.querySelectorAll('.step'));
+  return {
+    el,
+    stage: el.querySelector('.stage'),
+    steps,
+    fits: steps.map((s) => s.firstElementChild),
+    seen: steps.map(() => false),
+    wash: (el.dataset.wash || '255,255,255').split(',').map(Number),
+    label: el.dataset.label || '',
+    pin: el.dataset.pin || null,
+    t: null,
+    top: 0,
+    len: 1,
+    op: -1,
+  };
+});
+const LAST = scenes.length - 1;
 const ST = {}; // name → station index
 scenes.forEach((s, i) => { ST[s.label] = i; });
 
-function stationF() {
-  const y = window.scrollY + window.innerHeight / 2;
-  const mids = scenes.map((s) => s.el.offsetTop + s.el.offsetHeight / 2);
-  if (y <= mids[0]) return 0;
-  if (y >= mids[mids.length - 1]) return mids.length - 1;
-  let i = 0;
-  while (i < mids.length - 1 && y > mids[i + 1]) i++;
-  return i + clamp((y - mids[i]) / Math.max(1, mids[i + 1] - mids[i]));
+/* Scene tops / scroll lengths. The last scene can only be scrolled to
+   `height - vh`, so its progress is measured against that. */
+function measure() {
+  const vh = window.innerHeight;
+  const y0 = window.scrollY;
+  scenes.forEach((s, i) => {
+    s.top = Math.round(s.el.getBoundingClientRect().top + y0);
+    const h = s.el.offsetHeight;
+    s.len = Math.max(1, i === LAST ? h - vh : h);
+  });
+  fitSteps();
 }
-function localP(el, vh) {
-  const r = el.getBoundingClientRect();
-  return clamp(-r.top / Math.max(1, r.height - vh));
+
+/* Stages are viewport-locked, so a step that is taller than the screen
+   would be clipped with no way to reach it. Scale it down instead —
+   this is what keeps every section in its "responsive position". */
+function fitSteps() {
+  const avail = window.innerHeight - FIT_PAD * 2;
+  scenes.forEach((s) => s.fits.forEach((inner) => {
+    if (!inner) return;
+    inner.style.transform = 'none';
+    const h = inner.offsetHeight;
+    const k = h > avail ? Math.max(0.5, avail / h) : 1;
+    inner.style.transform = k < 1 ? `scale(${k.toFixed(4)})` : 'none';
+  }));
+}
+
+/* f is continuous scene-space: f = i + (progress through scene i). */
+function stationF() {
+  const y = window.scrollY;
+  let i = 0;
+  while (i < LAST && y >= scenes[i + 1].top) i++;
+  return i + clamp((y - scenes[i].top) / scenes[i].len);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -428,24 +483,30 @@ function initThree() {
    ═══════════════════════════════════════════════════════════════════ */
 const washEl = document.getElementById('wash');
 let curScene = 0;
+
+/* land ~35% into a scene, where its stage is fully faded in */
+function sceneScrollTop(i) {
+  const s = scenes[clamp(i, 0, LAST)];
+  return s.top + s.len * 0.35;
+}
 function goToScene(i) {
-  const s = scenes[clamp(i, 0, scenes.length - 1)];
-  window.scrollTo({ top: s.el.offsetTop, behavior: reduced ? 'auto' : 'smooth' });
+  window.scrollTo({ top: sceneScrollTop(i), behavior: reduced ? 'auto' : 'smooth' });
 }
 document.getElementById('goPrev').addEventListener('click', () => goToScene(curScene - 1));
 document.getElementById('goNext').addEventListener('click', () => goToScene(curScene + 1));
 
-const obs = new IntersectionObserver((entries) => {
-  entries.forEach((e) => {
-    if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); }
+/* in-page anchors must land inside a scene, not on its cold edge */
+document.querySelectorAll('a[href^="#"]').forEach((a) => {
+  a.addEventListener('click', (e) => {
+    const target = document.querySelector(a.getAttribute('href'));
+    const i = scenes.findIndex((s) => s.el === target);
+    if (i < 0) return;
+    e.preventDefault();
+    goToScene(i);
   });
-}, { threshold: 0.12 });
-document.querySelectorAll('.rv').forEach((el) => {
-  if (reduced) el.classList.add('in'); else obs.observe(el);
 });
 
 const beatA = document.getElementById('beatA');
-const beatB = document.getElementById('beatB');
 const scrollHint = document.getElementById('scrollHint');
 let hintReady = false;
 
@@ -485,124 +546,165 @@ function pinTargets(sc) {
     stH: q('[data-st-h]'), stP: q('[data-st-p]'), pops: qa('[data-pop]'),
     skillCards: qa('.skill-card'),
     vH: q('[data-v-h]'), vLabels: qa('.view-label'),
+    stageTitles: qa('.stage-title'), stagePanels: qa('.stage-panel'),
   };
   return sc.t;
 }
 
-const dnaSec = document.querySelector('[data-dna]');
-const stageTitles = Array.from(document.querySelectorAll('.stage-title'));
-const stagePanels = Array.from(document.querySelectorAll('.stage-panel'));
-const jSec = document.querySelector('[data-journey]');
 const jPath = document.querySelector('[data-j-path]');
 const jBall = document.querySelector('[data-j-ball]');
 let jLen = 0;
 
-function onScroll() {
-  const vh = window.innerHeight;
-  const f = stationF();
-  const i = Math.floor(f), t = f - i;
+/* the frame loop reads these back */
+const S = { f: 0, i: 0, p: 0, wt: 0 };
 
-  const wa = scenes[i].wash, wb = scenes[Math.min(i + 1, scenes.length - 1)].wash;
-  const w = [0, 1, 2].map((k) => Math.round(lerp(wa[k], wb[k], t)));
+function onScroll() {
+  const f = stationF();
+  const i = Math.min(Math.floor(f), LAST);
+  const p = clamp(f - i);
+  /* the dots hold their formation, then morph over the last stretch of
+     a scene so they arrive with the next one — not during this one */
+  const wt = smooth(clamp((p - MORPH_AT) / (1 - MORPH_AT)));
+  S.f = f; S.i = i; S.p = p; S.wt = wt;
+
+  const wa = scenes[i].wash, wb = scenes[Math.min(i + 1, LAST)].wash;
+  const w = [0, 1, 2].map((k) => Math.round(lerp(wa[k], wb[k], wt)));
   washEl.style.background = (w[0] === 255 && w[1] === 255 && w[2] === 255)
     ? '#fff'
     : `radial-gradient(1100px 700px at 50% 38%, rgb(${w[0]},${w[1]},${w[2]}), #ffffff 78%)`;
   document.documentElement.style.setProperty('--glow-rgb', `${w[0]},${w[1]},${w[2]}`);
 
-  curScene = t < 0.5 ? i : i + 1;
+  curScene = i;
 
-  scenes.forEach((sc) => {
-    if (!sc.pin) return;
-    const p = localP(sc.track || sc.el, vh);
-    const T = pinTargets(sc);
-    if (sc.pin === 'hero') {
-      // beat A (question) hands over to beat B (the answer) mid-pin
-      const out = ease(clamp((p - 0.22) / 0.2));
-      const inn = ease(clamp((p - 0.42) / 0.22));
-      beatA.style.opacity = String(1 - out);
-      beatA.style.transform = `translateY(${out * -46}px) scale(${1 - out * 0.05})`;
-      beatA.style.pointerEvents = out > 0.5 ? 'none' : 'auto';
-      beatB.style.opacity = String(inn);
-      beatB.style.transform = `translateY(${(1 - inn) * 40}px)`;
-      beatB.style.pointerEvents = inn > 0.5 ? 'auto' : 'none';
-      if (inn > 0.4 && !counted) { counted = true; countUp(); }
-      if (hintReady) scrollHint.style.opacity = p > 0.04 ? '0' : '1';
-      if (three) three.heroP = p;
+  /* ── stage + step cross-fades ──────────────────────────────────── */
+  scenes.forEach((sc, k) => {
+    const a = k === 0 ? -FADE_LEN * 1.5 : k - FADE_OVER;
+    let op = smooth(clamp((f - a) / FADE_LEN));
+    if (k < LAST) op *= 1 - smooth(clamp((f - (k + 1 - FADE_LEN)) / FADE_LEN));
+
+    /* the Collect beat is pure dots — it has no stage at all */
+    if (sc.stage && Math.abs(op - sc.op) > 0.002) {
+      sc.stage.style.opacity = op.toFixed(3);
+      sc.stage.style.visibility = op < 0.004 ? 'hidden' : 'visible';
+      sc.op = op;
     }
-    if (sc.pin === 'dash' && T.zoom) {
-      const q = ease(clamp(p / 0.65));
-      T.zoom.style.transform = `scale(${0.82 + 0.18 * q}) translateY(${(1 - q) * 30}px)`;
-      T.zoom.style.opacity = String(0.25 + 0.75 * q);
-    }
-    if (sc.pin === 'fan' && T.fans[0]) {
-      const q = ease(clamp(p / 0.7));
-      T.fans[0].style.transform = `rotate(${-7 * q}deg) translateX(${290 - 266 * q}px)`;
-      T.fans[2].style.transform = `rotate(${7 * q}deg) translateX(${-(290 - 266 * q)}px)`;
-      T.fans[1].style.transform = `translateY(${-14 * q}px) scale(${0.96 + 0.04 * q})`;
-    }
-    if (sc.pin === 'views' && T.vH) {
-      const q = ease(clamp((p - 0.08) / 0.2));
-      T.vH.style.opacity = String(q);
-      T.vH.style.transform = `translateY(${(1 - q) * 24}px)`;
-      T.vLabels.forEach((el, k) => el.classList.toggle('in', p > 0.34 + k * 0.1));
-    }
-    if (sc.pin === 'skills' && T.skillCards.length) {
-      T.skillCards.forEach((card, k) => card.classList.toggle('in', p > 0.12 + k * 0.055));
-    }
-    if (sc.pin === 'state' && T.stH) {
-      const q = ease(clamp(p / 0.4));
-      T.stH.style.transform = `scale(${0.88 + 0.12 * q})`;
-      T.stH.style.opacity = String(0.15 + 0.85 * q);
-      T.stP.style.opacity = String(clamp((p - 0.16) / 0.22));
-      T.pops.forEach((pl, k) => {
-        const v = clamp((p - 0.45 - k * 0.08) / 0.12);
-        pl.style.opacity = String(v);
-        pl.style.transform = `scale(${0.6 + 0.4 * v})`;
+    if (!sc.stage || op < 0.004) return;
+
+    const n = sc.steps.length;
+    if (n) {
+      const q = clamp(f - k) * n;
+      sc.steps.forEach((st, j) => {
+        const inn = j === 0 ? 1 : smooth(clamp((q - (j - STEP_FADE)) / STEP_FADE));
+        const out = j === n - 1 ? 1 : 1 - smooth(clamp((q - (j + 1 - STEP_FADE)) / STEP_FADE));
+        const o = inn * out;
+        st.style.opacity = o.toFixed(3);
+        st.style.pointerEvents = o > 0.6 ? 'auto' : 'none';
+        if (o > 0.4 && !sc.seen[j]) {
+          sc.seen[j] = true;
+          st.querySelectorAll('.rv').forEach((el, r) => {
+            el.style.transitionDelay = `${r * 110}ms`;
+            el.classList.add('in');
+          });
+        }
       });
     }
-    if (sc.pin === 'ai' && T.aiCard) {
-      const q1 = ease(clamp(p / 0.45));
-      T.aiCard.style.opacity = String(0.1 + 0.9 * q1);
-      T.aiCard.style.transform = `translateX(${(1 - q1) * 120}px)`;
-      const q2 = clamp((p - 0.5) / 0.28);
-      T.aiAns.style.opacity = String(q2);
-      T.aiAns.style.transform = `translateY(${(1 - q2) * 16}px)`;
-      T.aiFoot.style.opacity = String(0.15 + 0.85 * clamp((p - 0.76) / 0.2));
-    }
+
+    runPin(sc, clamp(f - k));
   });
 
-  if (dnaSec) {
-    const p = localP(dnaSec, vh);
-    const stage = p < 0.32 ? 0 : p < 0.62 ? 1 : 2;
-    stageTitles.forEach((el, k) => { el.style.opacity = k === stage ? '1' : '0.25'; });
-    stagePanels.forEach((el, k) => {
+  return f;
+}
+
+/* per-scene choreography, driven by that scene's own progress p (0..1).
+   Everything here is opacity / scale / horizontal — never a rise from
+   the bottom of the screen. */
+function runPin(sc, p) {
+  if (!sc.pin) return;
+  const T = pinTargets(sc);
+
+  if (sc.pin === 'hero') {
+    if (p > 0.45 && !counted) { counted = true; countUp(); }
+    if (hintReady) scrollHint.style.opacity = p > 0.04 ? '0' : '1';
+    if (three) three.heroP = p;
+    return;
+  }
+  if (sc.pin === 'dash' && T.zoom) {
+    const q = ease(clamp(p / 0.5));
+    T.zoom.style.transform = `scale(${0.88 + 0.12 * q})`;
+    T.zoom.style.opacity = String(0.3 + 0.7 * q);
+    return;
+  }
+  if (sc.pin === 'fan' && T.fans[0]) {
+    const q = ease(clamp(p / 0.6));
+    T.fans[0].style.transform = `rotate(${-7 * q}deg) translateX(${290 - 266 * q}px)`;
+    T.fans[2].style.transform = `rotate(${7 * q}deg) translateX(${-(290 - 266 * q)}px)`;
+    T.fans[1].style.transform = `scale(${0.96 + 0.04 * q})`;
+    return;
+  }
+  if (sc.pin === 'views' && T.vH) {
+    const q = ease(clamp((p - 0.06) / 0.18));
+    T.vH.style.opacity = String(q);
+    T.vH.style.transform = `scale(${0.97 + 0.03 * q})`;
+    T.vLabels.forEach((el, k) => el.classList.toggle('in', p > 0.3 + k * 0.09));
+    return;
+  }
+  if (sc.pin === 'skills' && T.skillCards.length) {
+    T.skillCards.forEach((card, k) => card.classList.toggle('in', p > 0.1 + k * 0.045));
+    return;
+  }
+  if (sc.pin === 'state' && T.stH) {
+    const q = ease(clamp(p / 0.35));
+    T.stH.style.transform = `scale(${0.9 + 0.1 * q})`;
+    T.stH.style.opacity = String(0.15 + 0.85 * q);
+    T.stP.style.opacity = String(clamp((p - 0.14) / 0.2));
+    T.pops.forEach((pl, k) => {
+      const v = clamp((p - 0.42 - k * 0.07) / 0.12);
+      pl.style.opacity = String(v);
+      pl.style.transform = `scale(${0.6 + 0.4 * v})`;
+    });
+    return;
+  }
+  if (sc.pin === 'ai' && T.aiCard) {
+    const q1 = ease(clamp(p / 0.4));
+    T.aiCard.style.opacity = String(0.1 + 0.9 * q1);
+    T.aiCard.style.transform = `scale(${0.96 + 0.04 * q1})`;
+    const q2 = clamp((p - 0.45) / 0.25);
+    T.aiAns.style.opacity = String(q2);
+    T.aiFoot.style.opacity = String(0.15 + 0.85 * clamp((p - 0.7) / 0.2));
+    return;
+  }
+  if (sc.pin === 'dna' && T.stageTitles.length) {
+    const stage = p < 0.34 ? 0 : p < 0.64 ? 1 : 2;
+    T.stageTitles.forEach((el, k) => { el.style.opacity = k === stage ? '1' : '0.25'; });
+    T.stagePanels.forEach((el, k) => {
       const on = k === stage;
       el.style.opacity = on ? '1' : '0';
-      el.style.transform = on ? 'translateY(0)' : 'translateY(18px)';
       el.style.pointerEvents = on ? 'auto' : 'none';
     });
     if (three) three.dnaP = p;
+    return;
   }
-
-  if (jSec && jPath && jBall) {
-    const r = jSec.getBoundingClientRect();
-    const p = clamp((vh * 0.6 - r.top - 180) / Math.max(1, r.height - 200));
+  if (sc.pin === 'journey' && jPath && jBall) {
     if (!jLen) jLen = jPath.getTotalLength();
-    const pt = jPath.getPointAtLength(jLen * p);
+    const pt = jPath.getPointAtLength(jLen * smooth(p));
     jBall.setAttribute('transform', `translate(${pt.x}, ${pt.y})`);
   }
-
-  return f;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    FRAME LOOP
    ═══════════════════════════════════════════════════════════════════ */
+/* heights decide both the scroll map and the fit-to-viewport scaling, so
+   re-measure once webfonts and images have settled */
+measure();
+window.addEventListener('resize', measure);
+window.addEventListener('load', measure);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
+
 if (reduced) {
   document.getElementById('world').style.display = 'none';
   beatA.querySelectorAll('[data-hb]').forEach((el) => el.classList.add('in'));
-  beatB.style.opacity = '1';
-  document.querySelectorAll('.skill-card, .view-label').forEach((el) => el.classList.add('in'));
+  document.querySelectorAll('.skill-card, .view-label, .rv').forEach((el) => el.classList.add('in'));
   statEl.textContent = '2,895';
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
@@ -652,9 +754,14 @@ if (reduced) {
     th.camera.lookAt(mx.x * 0.4, -mx.y * 0.25, th.camZ - 30);
     const planeZ = th.camZ - CAM_DIST;
 
-    /* base morph between the two neighbouring stations */
-    const i = Math.min(Math.floor(f), th.F.length - 2);
-    const tt = smooth(clamp(f - i));
+    /* base morph — the field holds a formation through the body of a
+       scene (S.wt === 0) and morphs to the next one over its tail, so
+       the dots arrive together with the incoming text */
+    const si = S.i;
+    let i = si, tt = S.wt;
+    if (i > th.F.length - 2) { i = th.F.length - 2; tt = 1; }
+    /* 1 while scene `idx` owns the screen, easing to 0 across each handover */
+    const hold = (idx) => (si === idx ? 1 - S.wt : si === idx - 1 ? S.wt : 0);
     const A = th.F[i], B = th.F[i + 1];
     const P = th.P, CL = th.CL, PH = th.phases;
     for (let k = 0; k < N * 3; k += 3) {
@@ -676,14 +783,14 @@ if (reduced) {
         P[k + 2] += (th.heroRing[k + 2] - A.pos[k + 2]) * wgt;
       }
     }
-    const lineBeat = clamp((th.heroP - 0.45) / 0.3) * (1 - clamp(f - 0.3, 0, 0.2) * 5);
+    const lineBeat = clamp((th.heroP - 0.45) / 0.25) * (1 - clamp((f - 0.72) / 0.18));
     th.lineGeo.setDrawRange(0, Math.floor(ease(clamp(lineBeat)) * th.nLineSegs) * 2);
     th.lines.position.z = planeZ;
-    th.lines.material.opacity = 0.7 * clamp(1 - (f - 0.25) * 3);
+    th.lines.material.opacity = 0.7 * clamp(1 - (f - 0.72) / 0.18);
 
     /* DASHBOARD: the stream actually flows */
     {
-      const wgt = clamp(1 - Math.abs(f - ST['Dashboard']));
+      const wgt = hold(ST['Dashboard']);
       if (wgt > 0.01) {
         for (let n = 0; n < N; n++) {
           const k = n * 3;
@@ -698,7 +805,7 @@ if (reduced) {
 
     /* COLLECT: the spiral keeps rotating till scroll */
     {
-      const wgt = clamp(1 - Math.abs(f - ST['Collect']));
+      const wgt = hold(ST['Collect']);
       if (wgt > 0.01) {
         const ang = time * 0.45 * wgt;
         for (let k = 0; k < N * 3; k += 3) rotXY(P, k, 0, 0, ang);
@@ -708,14 +815,14 @@ if (reduced) {
     /* DNA: strands appear in stage order, then the helix rotates */
     {
       const dnaI = ST['Measure'], skI = ST['12 skills'];
-      const wgt = clamp((f - (dnaI - 0.55)) / 0.4) * (1 - clamp((f - (skI + 0.45)) / 0.4));
+      const wgt = clamp((f - (dnaI - 0.35)) / 0.35) * (1 - clamp((f - (skI + 0.9)) / 0.35));
       if (wgt > 0.01) {
-        const cx = lerp(0, 7.2, smooth(clamp(f - dnaI)));
+        const cx = lerp(0, 7.2, smooth(clamp((f - (dnaI + 0.6)) / 0.8)));
         const ang = time * 0.4;
-        const reveal = f > dnaI + 0.5 ? 1 : th.dnaP; // fully woven once past Measure
+        const reveal = f > dnaI + 0.9 ? 1 : th.dnaP; // fully woven once past Measure
         for (let n = 0; n < N; n++) {
           const k = n * 3;
-          rotate2D(P, k, cx * (i >= dnaI ? 1 : 0), -3, ang * wgt);
+          rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), -3, ang * wgt);
           const vis = smooth(clamp((reveal - th.dnaThresh[n]) / 0.05));
           const fade = 1 - (1 - vis) * wgt;
           CL[k] = lerp(white.r, CL[k], fade);
@@ -727,7 +834,7 @@ if (reduced) {
 
     /* ON TRACK: each child slowly turns — term by term */
     {
-      const wgt = clamp(1 - Math.abs(f - ST['On track']));
+      const wgt = hold(ST['On track']);
       if (wgt > 0.01) {
         const centers = [-9.5, 0, 9.5];
         const ang = time * 0.3 * wgt;
