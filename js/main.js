@@ -22,10 +22,11 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* ═══════════════════════════════════════════════════════════════════
    THE STAGE SYSTEM — a true single page
 
-   No section ever travels. Each `.scene` is an empty scroll spacer that
-   owns a slice of the scrollbar; its `.stage` is position:fixed at the
-   viewport and only ever changes opacity. Sections dissolve into each
-   other through the dot field instead of sliding up from the bottom.
+   Each `.scene` is an empty scroll spacer that owns a slice of the
+   scrollbar; its `.stage` is position:fixed at the viewport. Sections
+   dissolve into each other through the dot field rather than travelling —
+   with ONE deliberate exception: hero → dashboard is a plain scroll, so
+   the dashboard climbs in from the bottom of the screen (see SCROLL_AT).
 
    Tunables:
      FADE_LEN   how long (in scene-units) a stage takes to fade in/out
@@ -34,6 +35,8 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
      STEP_FADE  same, for `.step` sub-panels inside one stage
      MORPH_AT   the point in a scene (0..1) where the dots stop holding
                 their formation and start morphing towards the next
+     SCROLL_AT  the point in the hero (0..1) where the scroll hand-over
+                to the dashboard begins — the only travelling boundary
      FIT_PAD    px of breathing room kept around a step when it has to
                 be scaled down to fit a short viewport
    ═══════════════════════════════════════════════════════════════════ */
@@ -41,6 +44,7 @@ const FADE_LEN = 0.12;
 const FADE_OVER = 0.04;
 const STEP_FADE = 0.22;
 const MORPH_AT = 0.68;
+const SCROLL_AT = 0.74;
 const FIT_PAD = 34;
 
 /* ── Scene registry (DOM order = station order) ───────────────────── */
@@ -60,6 +64,7 @@ const scenes = sceneEls.map((el) => {
     top: 0,
     len: 1,
     op: -1,
+    ty: 0,
   };
 });
 const LAST = scenes.length - 1;
@@ -189,6 +194,49 @@ function layoutHeroRing(ring) {
   }
 }
 
+/* Dashboard flow path, in world units at the dot plane. The airborne part
+   is expressed as viewport fractions so the sweep keeps its shape at any
+   aspect; the landing is anchored to the dashboard card's real layout box
+   so the dots always aim at its right edge, whatever size it renders at. */
+const STREAM_Z = -5.5;
+const streamPath = [];
+/* the card's resting box — measured with its scroll-driven scale(0.88→1)
+   temporarily off, so the target doesn't drift as the card zooms */
+function cardBox() {
+  const el = document.querySelector('[data-zoom]');
+  if (!el) return null;
+  const prev = el.style.transform;
+  el.style.transform = 'none';
+  const r = el.getBoundingClientRect();
+  el.style.transform = prev;
+  return r.width > 0 ? r : null;
+}
+function layoutStream() {
+  const W = window.innerWidth, H = window.innerHeight;
+  /* only trust a measurement taken against a real viewport, and clamp it —
+     a card caught mid-layout must not fling the flow off into nowhere */
+  const r = W > 0 && H > 0 ? cardBox() : null;
+  /* right edge, a little below the card's middle — where the arrow lands */
+  const edgeX = r ? clamp(r.right / W, 0.45, 0.97) : 0.75;
+  const edgeY = r ? clamp((r.top + r.height * 0.58) / H, 0.2, 0.88) : 0.6;
+  /* in high on the right, round the shoulder, then level off into the card.
+     The final two points are inside the card, hidden behind it. */
+  const pts = [
+    [0.930, -0.15], [0.955, 0.03], [0.968, 0.19], [0.968, 0.32],
+    [0.950, 0.44], [0.912, 0.545], [0.852, 0.605], [edgeX, edgeY],
+    [edgeX - 0.07, edgeY], [edgeX - 0.15, edgeY],
+  ];
+  streamPath.length = 0;
+  for (let k = 0; k < pts.length; k++) {
+    /* a shallow depth roll keeps the ribbon from reading as flat. The
+       fraction→world conversion has to use each point's OWN depth, or the
+       roll throws the arc off the side of the frame. */
+    const z = STREAM_Z + Math.sin((k / (pts.length - 1)) * Math.PI) * 1.2;
+    const v = visHalf(z);
+    streamPath.push([(pts[k][0] - 0.5) * 2 * v.w, -(pts[k][1] - 0.5) * 2 * v.h, z]);
+  }
+}
+
 function buildFormations() {
   const tmp = new THREE.Color();
   const white = new THREE.Color('#ffffff');
@@ -221,31 +269,44 @@ function buildFormations() {
     if (k % 2 === 0) heroLinks.push([k, (k + 2) % HERO_NODES]);
   }
 
-  /* 1 · DASHBOARD — a stream: in from top-right, through the card,
-       out at bottom-left (flow animated in the frame loop) */
-  const streamPath = [[19, 12, -6], [8, 5, -5], [0, 0, -6.5], [-5, -6, -5], [-19, -12, -6]];
+  /* 1 · DASHBOARD — a stream that pours into the dashboard card: in off
+       the top-right corner, out around the right shoulder of the frame,
+       then a turn left that drives straight into the card's right edge.
+       The last waypoints sit inside the card, and the card (.content,
+       z-index 2) paints over the canvas (#world, z-index 1) — so the dots
+       are physically swallowed at its edge with no fade needed. */
   const streamT = new Float32Array(N);
   const streamJit = new Float32Array(N * 3);
   const streamPoint = (t, j3, out) => {
-    const seg = Math.min(Math.floor(t * 4), 3), tt = t * 4 - seg;
+    const SEG = streamPath.length - 1;
+    const seg = Math.min(Math.floor(t * SEG), SEG - 1), tt = t * SEG - seg;
     const a = streamPath[seg], b = streamPath[seg + 1];
-    out[0] = lerp(a[0], b[0], tt) + streamJit[j3];
-    out[1] = lerp(a[1], b[1], tt) + streamJit[j3 + 1];
-    out[2] = lerp(a[2], b[2], tt) + streamJit[j3 + 2];
+    /* the band tightens over the run-in so the flow funnels into the card
+       rather than arriving as a wide smear */
+    const j = lerp(1, 0.3, smooth(clamp((t - 0.5) / 0.5)));
+    out[0] = lerp(a[0], b[0], tt) + streamJit[j3] * j;
+    out[1] = lerp(a[1], b[1], tt) + streamJit[j3 + 1] * j;
+    out[2] = lerp(a[2], b[2], tt) + streamJit[j3 + 2] * j;
   };
-  {
-    const dash = make();
-    const r = rng(22);
+  const dash = make();
+  const relayoutDash = () => {
     const p = [0, 0, 0];
     for (let i = 0; i < N; i++) {
-      streamT[i] = r();
-      streamJit[i * 3] = (r() - 0.5) * 3.4;
-      streamJit[i * 3 + 1] = (r() - 0.5) * 2.6;
-      streamJit[i * 3 + 2] = (r() - 0.5) * 2;
       streamPoint(streamT[i], i * 3, p);
       setP(dash, i, p[0], p[1], p[2]);
+    }
+  };
+  {
+    const r = rng(22);
+    for (let i = 0; i < N; i++) {
+      streamT[i] = r();
+      streamJit[i * 3] = (r() - 0.5) * 3.2;
+      streamJit[i * 3 + 1] = (r() - 0.5) * 2.4;
+      streamJit[i * 3 + 2] = (r() - 0.5) * 2;
       setC(dash, i, MIX[i % 5]);
     }
+    layoutStream();
+    relayoutDash();
     F.push(dash);
   }
 
@@ -411,7 +472,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, heroLinks, dnaThresh, streamT, streamJit, streamPoint };
+  return { F, heroRing, heroLinks, dnaThresh, streamT, streamJit, streamPoint, relayoutDash };
 }
 
 function initThree() {
@@ -550,6 +611,10 @@ function initThree() {
     layoutHeroRing(built.heroRing);
     syncNodes();
     nodeGeo.attributes.position.needsUpdate = true;
+    /* the flow is aimed at the card, so it has to be re-aimed when the
+       card moves or resizes under it */
+    layoutStream();
+    built.relayoutDash();
   });
 
   return {
@@ -658,10 +723,33 @@ function onScroll() {
   curScene = i;
 
   /* ── stage + step cross-fades ──────────────────────────────────── */
+  /* HERO → DASHBOARD is the one boundary that scrolls instead of
+     dissolving: over the hero's last stretch the hero rides up and out
+     while the dashboard climbs in from below, both at full opacity. */
+  const travel = smooth(clamp((f - SCROLL_AT) / (1 - SCROLL_AT)));
+  const travelling = f > SCROLL_AT && f < 1;
+
   scenes.forEach((sc, k) => {
     const a = k === 0 ? -FADE_LEN * 1.5 : k - FADE_OVER;
     let op = smooth(clamp((f - a) / FADE_LEN));
     if (k < LAST) op *= 1 - smooth(clamp((f - (k + 1 - FADE_LEN)) / FADE_LEN));
+
+    /* the travelling pair leaves and enters by moving, so neither one is
+       allowed to dissolve across this boundary */
+    let ty = 0;
+    if (k === 0 && f < 1) {
+      ty = -travel;
+      if (travelling) op = 1;
+    } else if (k === 1) {
+      if (f < 1) ty = 1 - travel;
+      /* full strength from the moment it starts climbing, right through
+         to its own (unchanged) dissolve into Reports */
+      if (f > SCROLL_AT) op = 1 - smooth(clamp((f - (2 - FADE_LEN)) / FADE_LEN));
+    }
+    if (sc.stage && ty !== sc.ty) {
+      sc.stage.style.transform = ty ? `translate3d(0, ${(ty * 100).toFixed(3)}%, 0)` : '';
+      sc.ty = ty;
+    }
 
     /* the Collect beat is pure dots — it has no stage at all */
     if (sc.stage && Math.abs(op - sc.op) > 0.002) {
@@ -710,7 +798,10 @@ function runPin(sc, p) {
     return;
   }
   if (sc.pin === 'dash' && T.zoom) {
-    const q = ease(clamp(p / 0.5));
+    /* the card settles while it is still climbing, so it has arrived at
+       full strength by the time the scroll hands over — a section that
+       scrolls into view shouldn't turn up faint */
+    const q = ease(clamp((S.f - SCROLL_AT) / (1 - SCROLL_AT)));
     T.zoom.style.transform = `scale(${0.88 + 0.12 * q})`;
     T.zoom.style.opacity = String(0.3 + 0.7 * q);
     return;
@@ -865,23 +956,34 @@ if (reduced) {
       }
     }
     /* the anchors land as the ring settles, then the threads are drawn one
-       after another so you watch the interconnections being made; the whole
-       web leaves with the scene */
-    const heroOut = clamp(1 - (f - 0.78) / 0.13);
-    const nodeFade = ease(clamp((th.heroP - 0.44) / 0.10)) * heroOut;
+       after another so you watch the interconnections being made. The web
+       is a fixed world layer, so it has to be gone by SCROLL_AT — it would
+       otherwise hang in the middle of the frame while the hero text
+       scrolls away underneath it. */
+    const heroOut = clamp(1 - (f - 0.64) / 0.10);
+    const nodeFade = ease(clamp((th.heroP - 0.38) / 0.09)) * heroOut;
     th.nodes.position.z = planeZ;
     th.nodes.material.opacity = nodeFade;
     th.links.position.z = planeZ;
     th.links.material.opacity = heroOut;
-    if (heroOut > 0) th.drawLinks(clamp((th.heroP - 0.50) / 0.24));
+    if (heroOut > 0) th.drawLinks(clamp((th.heroP - 0.44) / 0.20));
 
-    /* DASHBOARD: the stream actually flows */
+    /* DASHBOARD: the stream actually flows, and pours into the card */
     {
-      const wgt = hold(ST['Dashboard']);
+      const dashI = ST['Dashboard'];
+      const incoming = si === dashI - 1;
+      /* on the way in the flow takes the field over a little ahead of the
+         base morph, so the shape you see settling is the curve, not a
+         diagonal slide from the hero ring */
+      const wgt = incoming ? smooth(clamp(S.wt / 0.8)) : hold(dashI);
       if (wgt > 0.01) {
+        /* every dot is held at the mouth of the curve as the hero lets go
+           and released down it as the handover completes — the field
+           arrives by pouring in from the top-right, not by teleporting */
+        const pour = incoming ? smooth(S.wt) : 1;
         for (let n = 0; n < N; n++) {
           const k = n * 3;
-          const t2 = (th.streamT[n] + time * 0.04) % 1;
+          const t2 = ((th.streamT[n] + time * 0.07) % 1) * pour;
           th.streamPoint(t2, k, sp);
           P[k] = lerp(P[k], sp[0], wgt);
           P[k + 1] = lerp(P[k + 1], sp[1], wgt);
