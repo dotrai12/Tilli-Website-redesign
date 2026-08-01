@@ -167,30 +167,136 @@ function spreadHero(pos) {
   }
 }
 
-/* Hero beat B: 13 anchor dots pinned to a clean rim with the rest of the
-   field loosened into a wide, airy halo behind them. Sized off the camera
-   frustum (and re-run on resize, like the scatter) so the rim always lands
-   out near the edge of the frame — clear of the copy, and clear of the
-   `.hero-glow` scrim that would otherwise wash the connections out. */
-const HERO_NODES = 13;
-const heroNodeIdx = new Int32Array(HERO_NODES);
-for (let k = 0; k < HERO_NODES; k++) heroNodeIdx[k] = Math.round((k * N) / HERO_NODES) % N;
+/* ── Beat-B connection network ─────────────────────────────────────
+   The nodes are real dots picked out of the field (not an overlay), so
+   the threads connect the scene's own dots. buildHeroNetwork() lays them
+   round a rim starting from the TOP, wires an open chain with some links
+   dropped (so it isn't a perfect symmetric ring), and hangs a few leaf
+   dots off the chain that carry a single branching thread. Everything is
+   live-tunable from the GUI panel (buildGUI); the network reseeds from a
+   fixed seed each rebuild, so a given set of values is deterministic. */
+const HERO_CFG = {
+  autoWire: true,   // generated network on, plus the hand-wired BAKED_LINKS below
+  count: 12,        // field dots on the main rim
+  linksPerNode: 2,  // forward neighbours each rim node can thread to (auto only)
+  skip: 0.35,       // 0..0.9 — chance a candidate thread is dropped (auto only)
+  spacing: 0.35,    // 0 = perfectly even round the rim, 1 = quite uneven
+  branches: 4,      // leaf dots that hang off the chain (auto only)
+  thickness: 0.050, // half-width of a thread, in world units
+  opacity: 0.45,    // master multiplier on thread opacity
+  ringScale: 1.32,  // tightens / widens the rim
+  color: '#2E3542',
+};
+const HERO_TOP = Math.PI / 2; // rim starts at the top of the frame
+
+/* Hand-wired links baked from the GUI's Edit mode (pairs of field indices).
+   They compose on top of the generated network and load by default; the
+   layout is deterministic (rng seed + the config above), so these land on
+   the exact dots they were drawn on. */
+const BAKED_LINKS = [[0, 367], [367, 59], [167, 247], [265, 281], [33, 125], [125, 367]];
+
+/* build the whole network for the current config. Links are stored as
+   pairs of *field* indices, so drawLinks can read endpoints straight from
+   the live dot field. Node/branch angles are stored so layoutHeroRing can
+   place those exact dots on / just outside the rim. */
+let heroNet = buildHeroNetwork(HERO_CFG);
+function buildHeroNetwork(cfg) {
+  const r = rng(7);
+  const count = Math.max(2, Math.round(cfg.count));
+  const step = (Math.PI * 2) / count;
+
+  /* evenly spaced field dots become the rim nodes; their angle is the even
+     position off the top, nudged by up to ±half a step for `spacing` */
+  const nodeIdx = new Int32Array(count);
+  const nodeAng = new Float32Array(count);
+  for (let k = 0; k < count; k++) {
+    nodeIdx[k] = Math.round((k * N) / count) % N;
+    nodeAng[k] = HERO_TOP + k * step + (r() - 0.5) * step * cfg.spacing;
+  }
+
+  const links = [];
+  const branchIdx = [];
+  const branchAng = [];
+
+  /* With auto-wiring OFF the ring is just a clean set of pickable dots —
+     no threads, no leaves — so the wiring can be drawn entirely by hand in
+     Edit mode. Everything below only runs when auto-wiring is on. */
+  if (cfg.autoWire) {
+    /* open chain round the rim (k → k+1), plus longer chords up to
+       linksPerNode. The +1 chain is the backbone but the odd one is dropped
+       to leave a gap; the longer chords are dropped at the `skip` rate. The
+       ring is left open (no k=last → 0 wrap) so it never closes into a
+       perfect polygon. */
+    const deg = new Int32Array(count);
+    const add = (ka, kb) => { links.push([nodeIdx[ka], nodeIdx[kb]]); deg[ka]++; deg[kb]++; };
+    const maxD = Math.max(1, Math.round(cfg.linksPerNode));
+    for (let k = 0; k < count; k++) {
+      for (let d = 1; d <= maxD; d++) {
+        const j = k + d;
+        if (j >= count) continue;               // open chain — no wraparound
+        const p = d === 1 ? cfg.skip * 0.35 : cfg.skip; // keep most of the backbone
+        if (r() < p) continue;
+        add(k, j);
+      }
+    }
+    /* guarantee no rim node is fully stranded: link any orphan to its
+       neighbour so the chain still reads as one network */
+    for (let k = 0; k < count; k++) {
+      if (deg[k] === 0) add(k, k === count - 1 ? k - 1 : k + 1);
+    }
+
+    /* leaf dots: a distinct field dot hung just outside a rim node, wired
+       to it once — a single thread branching off the main connection */
+    const used = new Set();
+    for (let k = 0; k < count; k++) used.add(nodeIdx[k]);
+    const nb = Math.max(0, Math.round(cfg.branches));
+    for (let b = 0; b < nb; b++) {
+      const host = Math.floor(r() * count);
+      let li = 0, guard = 0;
+      do { li = Math.floor(r() * N); guard++; } while (used.has(li) && guard < 60);
+      used.add(li);
+      branchIdx.push(li);
+      branchAng.push({ ang: nodeAng[host] + (r() - 0.5) * 0.5, rad: 1.2 + r() * 0.28 });
+      links.push([nodeIdx[host], li]);
+    }
+  }
+
+  return { count, nodeIdx, nodeAng, links, branchIdx, branchAng };
+}
+
+/* place the network's dots: rim nodes on the ellipse, leaves just outside
+   it, everyone else loosened into a wide, airy halo behind. Sized off the
+   camera frustum (re-run on resize) so the rim always lands near the frame
+   edge, clear of the copy. */
 function layoutHeroRing(ring) {
   const v = visHalf(-3);
-  const rx = Math.min(v.w * 0.86, 21), ry = v.h * 0.8;
+  const rx = Math.min(v.w * 0.86, 21) * HERO_CFG.ringScale, ry = v.h * 0.8 * HERO_CFG.ringScale;
   const r = rng(12);
-  const isNode = new Uint8Array(N);
-  for (let k = 0; k < HERO_NODES; k++) isNode[heroNodeIdx[k]] = 1;
+  const net = heroNet;
+  const special = new Uint8Array(N);
+  for (let k = 0; k < net.nodeIdx.length; k++) {
+    const i = net.nodeIdx[k];
+    special[i] = 1;
+    ring[i * 3] = Math.cos(net.nodeAng[k]) * rx;
+    ring[i * 3 + 1] = Math.sin(net.nodeAng[k]) * ry;
+    ring[i * 3 + 2] = -3;
+  }
+  for (let b = 0; b < net.branchIdx.length; b++) {
+    const i = net.branchIdx[b];
+    special[i] = 1;
+    const ba = net.branchAng[b];
+    ring[i * 3] = Math.cos(ba.ang) * rx * ba.rad;
+    ring[i * 3 + 1] = Math.sin(ba.ang) * ry * ba.rad;
+    ring[i * 3 + 2] = -3;
+  }
   for (let i = 0; i < N; i++) {
+    if (special[i]) continue;
     const jit = r(), spread = r(), depth = r();
-    const rim = isNode[i] === 1;
-    /* anchors sit exactly on the rim so the network reads as one shape;
-       everyone else drifts in angle and across a broad, sparse annulus */
-    const ang = (i / N) * Math.PI * 2 + (rim ? 0 : (jit - 0.5) * 0.55);
-    const rad = rim ? 1 : 0.72 + spread * 0.5;
+    const ang = (i / N) * Math.PI * 2 + (jit - 0.5) * 0.55;
+    const rad = 0.72 + spread * 0.5;
     ring[i * 3] = Math.cos(ang) * rx * rad;
     ring[i * 3 + 1] = Math.sin(ang) * ry * rad;
-    ring[i * 3 + 2] = rim ? -3 : -2 - depth * 5;
+    ring[i * 3 + 2] = -2 - depth * 5;
   }
 }
 
@@ -256,18 +362,11 @@ function buildFormations() {
     for (let i = 0; i < N; i++) setC(hero, i, MIX[i % 5]);
     F.push(hero);
   }
-  /* hero beat B target — see layoutHeroRing() */
+  /* hero beat B target — see layoutHeroRing(). The wiring lives in the
+     module-level `heroNet` (see buildHeroNetwork), rebuilt live from the
+     GUI; the ring positions are laid out from it here. */
   const heroRing = new Float32Array(N * 3);
   layoutHeroRing(heroRing);
-  /* who is wired to whom: every anchor to its neighbour all the way round,
-     plus a second hop off every other anchor so the busier nodes carry
-     three or four threads. Both hops are short chords of the ellipse, so
-     no thread ever comes closer than 0.88 of the rim to the copy. */
-  const heroLinks = [];
-  for (let k = 0; k < HERO_NODES; k++) {
-    heroLinks.push([k, (k + 1) % HERO_NODES]);
-    if (k % 2 === 0) heroLinks.push([k, (k + 2) % HERO_NODES]);
-  }
 
   /* 1 · DASHBOARD — a stream that pours into the dashboard card: in off
        the top-right corner, out around the right shoulder of the frame,
@@ -472,7 +571,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, heroLinks, dnaThresh, streamT, streamJit, streamPoint, relayoutDash };
+  return { F, heroRing, dnaThresh, streamT, streamJit, streamPoint, relayoutDash };
 }
 
 function initThree() {
@@ -532,63 +631,162 @@ function initThree() {
   /* hero connections. WebGL ignores LineBasicMaterial.linewidth on every
      desktop driver, so a real stroke has to be geometry: each link is a
      thin quad in the ring's plane, rebuilt each frame so the thread can be
-     animated growing out from one anchor towards the next. */
-  const LINK_HALF_W = 0.105;
-  const linkPos = new Float32Array(built.heroLinks.length * 6 * 3);
+     animated growing out from one dot towards the next. The endpoints are
+     read live from the dot field itself — these ARE the scene's dots
+     connecting, not a separate overlay of anchor dots. */
+  /* `linkDraw` = the procedural network PLUS any hand-wired manual links.
+     Manual links survive a procedural rebuild (they live in their own
+     array), so the GUI's "Edit wiring" mode composes on top of the
+     generated web. Both are pairs of field indices. */
+  let manualLinks = BAKED_LINKS.map((l) => [l[0], l[1]]);
+  let linkDraw = heroNet.links.concat(manualLinks);
+  let linkPos = new Float32Array(Math.max(linkDraw.length, 1) * 6 * 3);
   const linkGeo = new THREE.BufferGeometry();
   linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
   linkGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
   const links = new THREE.Mesh(linkGeo, new THREE.MeshBasicMaterial({
-    color: 0x2E3542, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+    color: new THREE.Color(HERO_CFG.color), transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
   }));
   links.frustumCulled = false;
   links.renderOrder = 1;
   scene3.add(links);
 
-  /* the anchors themselves, drawn over the field at twice its dot size */
-  const nodePos = new Float32Array(HERO_NODES * 3);
-  const nodeCol = new Float32Array(HERO_NODES * 3);
-  const syncNodes = () => {
-    for (let k = 0; k < HERO_NODES; k++) {
-      const idx = heroNodeIdx[k];
-      nodePos.set(built.heroRing.subarray(idx * 3, idx * 3 + 3), k * 3);
+  function refreshLinkDraw() {
+    linkDraw = heroNet.links.concat(manualLinks);
+    const need = Math.max(linkDraw.length, 1) * 18;
+    if (linkPos.length < need) {
+      linkPos = new Float32Array(need);
+      linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
     }
-  };
-  {
-    const c = new THREE.Color();
-    const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
-    for (let k = 0; k < HERO_NODES; k++) {
-      c.set(MIX[k % 5]);
-      nodeCol[k * 3] = c.r; nodeCol[k * 3 + 1] = c.g; nodeCol[k * 3 + 2] = c.b;
-    }
-    syncNodes();
   }
-  const nodeGeo = new THREE.BufferGeometry();
-  nodeGeo.setAttribute('position', new THREE.BufferAttribute(nodePos, 3));
-  nodeGeo.setAttribute('color', new THREE.BufferAttribute(nodeCol, 3));
-  const nodes = new THREE.Points(nodeGeo, new THREE.PointsMaterial({
-    size: 3, map: tex, vertexColors: true, transparent: true, opacity: 0, depthWrite: false,
-  }));
-  nodes.frustumCulled = false;
-  nodes.renderOrder = 2;
-  scene3.add(nodes);
+
+  /* regenerate the procedural network when the GUI changes a structural
+     value; manual links are preserved and re-composed on top */
+  function rebuildHeroNetwork() {
+    heroNet = buildHeroNetwork(HERO_CFG);
+    layoutHeroRing(built.heroRing);
+    links.material.color.set(HERO_CFG.color);
+    refreshLinkDraw();
+  }
+
+  /* ── Manual wiring: pick dots in the scene, then connect them ──────
+     A bright overlay marks the current selection; edit mode shows a
+     locked, static ring so picking is stable (no scroll/breathing). */
+  const raycaster = new THREE.Raycaster();
+  raycaster.params.Points.threshold = 1.0;
+  const EDIT_VIEW_SCALE = 0.62; // ring shrink while editing, so no dot is occluded
+  let editMode = false;
+  const selection = [];
+  const contentEl = document.querySelector('.content');
+
+  const selPos = new Float32Array(N * 3);
+  const selGeo = new THREE.BufferGeometry();
+  selGeo.setAttribute('position', new THREE.BufferAttribute(selPos, 3));
+  selGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
+  const selMat = new THREE.PointsMaterial({
+    size: 2.4, map: tex, color: new THREE.Color('#E91E8C'),
+    transparent: true, opacity: 0, depthWrite: false, depthTest: false,
+  });
+  const selDots = new THREE.Points(selGeo, selMat);
+  selDots.frustumCulled = false; selDots.renderOrder = 3;
+  scene3.add(selDots);
+
+  function updateSelDots(srcPos) {
+    for (let s = 0; s < selection.length; s++) {
+      const i = selection[s] * 3;
+      selPos[s * 3] = srcPos[i]; selPos[s * 3 + 1] = srcPos[i + 1]; selPos[s * 3 + 2] = srcPos[i + 2];
+    }
+    selGeo.setDrawRange(0, selection.length);
+    selGeo.attributes.position.needsUpdate = true;
+    selMat.opacity = (editMode && selection.length) ? 1 : 0;
+  }
+
+  function pick(clientX, clientY) {
+    const ndc = new THREE.Vector2(
+      (clientX / window.innerWidth) * 2 - 1,
+      -(clientY / window.innerHeight) * 2 + 1,
+    );
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(pts);
+    if (!hits.length) return;
+    /* prefer the dot nearest the click point on screen (smallest distance
+       to the ray), not the one nearest the camera — otherwise a faint halo
+       dot floating in front steals clicks meant for a rim node */
+    let best = hits[0];
+    for (const h of hits) if (h.distanceToRay < best.distanceToRay) best = h;
+    const idx = best.index;
+    const at = selection.indexOf(idx);
+    if (at >= 0) selection.splice(at, 1); else selection.push(idx);
+  }
+  /* the .content HTML sits above the canvas (z 2 > 1) and its steps take
+     inline pointer-events:auto from the scroll choreography, so they'd
+     swallow every click. A dedicated transparent capture layer above the
+     content (but below the GUI) receives the picks instead — picking is
+     pure screen→ray math, so it doesn't matter which element is hit. */
+  const pickLayer = document.createElement('div');
+  pickLayer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:55;display:none;cursor:crosshair;';
+  pickLayer.addEventListener('click', (e) => { if (editMode) pick(e.clientX, e.clientY); });
+  document.body.appendChild(pickLayer);
+
+  function setEditMode(on) {
+    editMode = on;
+    pickLayer.style.display = on ? 'block' : 'none';
+    /* fade the copy right down so the dots are clearly visible to pick */
+    if (contentEl) { contentEl.style.opacity = on ? '0.12' : ''; contentEl.style.pointerEvents = on ? 'none' : ''; }
+    if (on) geo.computeBoundingSphere();
+    else selMat.opacity = 0;
+  }
+  const isEditing = () => editMode;
+  function connectSelected() {
+    for (let s = 1; s < selection.length; s++) manualLinks.push([selection[s - 1], selection[s]]);
+    selection.length = 0;
+    refreshLinkDraw();
+  }
+  const clearSelection = () => { selection.length = 0; };
+  const clearManual = () => { manualLinks.length = 0; refreshLinkDraw(); };
+  const selectionInfo = () => ({ count: selection.length, ids: selection.slice(), manual: manualLinks.length });
+  const wiringText = () => '[' + manualLinks.map((l) => `[${l[0]},${l[1]}]`).join(',') + ']';
+
+  /* edit mode: hold the ring dead-still, fully wired, and render the
+     selection overlay — everything else in step() is skipped */
+  function stepEdit() {
+    camera.position.set(0, 0, CAM_DIST);
+    camera.lookAt(0, 0, CAM_DIST - 30);
+    P.set(built.heroRing);
+    /* pull the whole ring inward for editing so no dot hides behind the
+       GUI panel or runs off the frame edge — clicking stays easy. Wiring
+       is stored by dot index, so the shrink is purely a picking view. */
+    for (let k = 0; k < N * 3; k += 3) { P[k] *= EDIT_VIEW_SCALE; P[k + 1] *= EDIT_VIEW_SCALE; }
+    CL.set(built.F[0].col);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    links.position.z = 0;
+    links.material.opacity = Math.max(0.85, HERO_CFG.opacity);
+    drawLinks(1, P);
+    updateSelDots(P);
+    renderer.render(scene3, camera);
+  }
 
   /* lay the link quads out for a given draw progress (0 = nothing yet,
-     1 = every thread closed). Links light up in rim order with a short
-     overlap, so you watch the web stitch itself together. */
+     1 = every thread closed), reading each endpoint live from `srcPos`
+     (the field's own positions, breathing and all). Links (procedural +
+     manual, stored as pairs of field indices) light up in order with a
+     short overlap, so you watch the web stitch itself from the top. */
   const OVERLAP = 2.4;
-  function drawLinks(beat) {
-    const L = built.heroLinks, R = built.heroRing, NI = heroNodeIdx;
+  function drawLinks(beat, srcPos) {
+    const L = linkDraw;
+    const hw = HERO_CFG.thickness;
+    linkGeo.setDrawRange(0, L.length * 6);
     for (let k = 0; k < L.length; k++) {
       const t = ease(clamp((beat * (L.length + OVERLAP) - k) / OVERLAP));
       const o = k * 18;
       if (t <= 0) { linkPos.fill(0, o, o + 18); continue; }
-      const a = NI[L[k][0]] * 3, b = NI[L[k][1]] * 3;
-      const ax = R[a], ay = R[a + 1], az = R[a + 2];
-      const tx = lerp(ax, R[b], t), ty = lerp(ay, R[b + 1], t), tz = lerp(az, R[b + 2], t);
+      const a = L[k][0] * 3, b = L[k][1] * 3;
+      const ax = srcPos[a], ay = srcPos[a + 1], az = srcPos[a + 2];
+      const tx = lerp(ax, srcPos[b], t), ty = lerp(ay, srcPos[b + 1], t), tz = lerp(az, srcPos[b + 2], t);
       let nx = -(ty - ay), ny = tx - ax;
       const len = Math.hypot(nx, ny) || 1;
-      nx = (nx / len) * LINK_HALF_W; ny = (ny / len) * LINK_HALF_W;
+      nx = (nx / len) * hw; ny = (ny / len) * hw;
       const v = [
         ax + nx, ay + ny, az, ax - nx, ay - ny, az, tx - nx, ty - ny, tz,
         ax + nx, ay + ny, az, tx - nx, ty - ny, tz, tx + nx, ty + ny, tz,
@@ -609,8 +807,6 @@ function initThree() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     spreadHero(built.F[0].pos);
     layoutHeroRing(built.heroRing);
-    syncNodes();
-    nodeGeo.attributes.position.needsUpdate = true;
     /* the flow is aimed at the card, so it has to be re-aimed when the
        card moves or resizes under it */
     layoutStream();
@@ -619,7 +815,9 @@ function initThree() {
 
   return {
     renderer, scene3, camera, geo, P, CL, phases, ...built,
-    links, nodes, drawLinks,
+    links, drawLinks, rebuildHeroNetwork,
+    isEditing, stepEdit, setEditMode, connectSelected, clearSelection, clearManual,
+    selectionInfo, wiringText, getManual: () => manualLinks.map((l) => [l[0], l[1]]),
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -873,6 +1071,166 @@ window.addEventListener('resize', measure);
 window.addEventListener('load', measure);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
 
+/* ═══════════════════════════════════════════════════════════════════
+   GUI — live controls for the hero connection network. Vanilla DOM so it
+   stays self-contained (no extra module to vendor). Collapsible; toggle
+   with the ⚙ button or the `g` key.
+   ═══════════════════════════════════════════════════════════════════ */
+function buildGUI(th) {
+  const wrap = document.createElement('div');
+  wrap.id = 'gui';
+  wrap.style.cssText = [
+    'position:fixed', 'top:16px', 'right:16px', 'z-index:60', 'width:224px',
+    'font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+    'color:#2E3542', 'background:rgba(255,255,255,0.92)',
+    'backdrop-filter:blur(8px)', '-webkit-backdrop-filter:blur(8px)',
+    'border:1px solid rgba(46,53,66,0.12)', 'border-radius:12px',
+    'box-shadow:0 6px 24px rgba(20,20,20,0.12)', 'overflow:hidden',
+    'user-select:none',
+  ].join(';');
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer;font-weight:700;letter-spacing:0.02em;';
+  head.innerHTML = '<span>Connections</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
+  wrap.appendChild(head);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:4px 12px 12px;display:flex;flex-direction:column;gap:12px;';
+  wrap.appendChild(body);
+
+  const row = (label, get, set, min, max, step) => {
+    const r = document.createElement('label');
+    r.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;justify-content:space-between;';
+    const name = document.createElement('span'); name.textContent = label;
+    const val = document.createElement('span'); val.style.cssText = 'font-variant-numeric:tabular-nums;opacity:0.7;';
+    const fmt = (v) => (step < 1 ? v.toFixed(step < 0.01 ? 3 : 2) : v);
+    val.textContent = fmt(get());
+    top.append(name, val);
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = get();
+    inp.style.cssText = 'width:100%;accent-color:#E91E8C;';
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      set(v); val.textContent = fmt(v);
+    });
+    r.append(top, inp);
+    body.appendChild(r);
+    return r;
+  };
+
+  const rebuild = () => th.rebuildHeroNetwork();
+
+  /* auto-wiring toggle: OFF (default) = a bare ring of dots to wire by hand */
+  const autoRow = document.createElement('label');
+  autoRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer;';
+  const autoBox = document.createElement('input');
+  autoBox.type = 'checkbox'; autoBox.checked = HERO_CFG.autoWire;
+  autoBox.style.cssText = 'accent-color:#E91E8C;width:15px;height:15px;';
+  autoBox.addEventListener('change', () => { HERO_CFG.autoWire = autoBox.checked; rebuild(); });
+  const autoTxt = document.createElement('span'); autoTxt.textContent = 'Auto-generate wiring';
+  autoRow.append(autoBox, autoTxt);
+  body.appendChild(autoRow);
+
+  row('Connected dots', () => HERO_CFG.count, (v) => { HERO_CFG.count = Math.round(v); rebuild(); }, 3, 40, 1);
+  row('Links per dot', () => HERO_CFG.linksPerNode, (v) => { HERO_CFG.linksPerNode = Math.round(v); rebuild(); }, 1, 6, 1);
+  row('Skip connections', () => HERO_CFG.skip, (v) => { HERO_CFG.skip = v; rebuild(); }, 0, 0.9, 0.05);
+  row('Spacing jitter', () => HERO_CFG.spacing, (v) => { HERO_CFG.spacing = v; rebuild(); }, 0, 1, 0.05);
+  row('Branch dots', () => HERO_CFG.branches, (v) => { HERO_CFG.branches = Math.round(v); rebuild(); }, 0, 20, 1);
+  row('Line thickness', () => HERO_CFG.thickness, (v) => { HERO_CFG.thickness = v; }, 0.02, 0.5, 0.005);
+  row('Line opacity', () => HERO_CFG.opacity, (v) => { HERO_CFG.opacity = v; }, 0, 1, 0.05);
+  row('Ring size', () => HERO_CFG.ringScale, (v) => { HERO_CFG.ringScale = v; rebuild(); }, 0.5, 1.4, 0.02);
+
+  const cRow = document.createElement('label');
+  cRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
+  cRow.innerHTML = '<span>Line color</span>';
+  const color = document.createElement('input');
+  color.type = 'color'; color.value = HERO_CFG.color;
+  color.style.cssText = 'width:40px;height:22px;border:none;background:none;padding:0;cursor:pointer;';
+  color.addEventListener('input', () => { HERO_CFG.color = color.value; th.links.material.color.set(color.value); });
+  cRow.appendChild(color);
+  body.appendChild(cRow);
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:10.5px;opacity:0.5;';
+  hint.textContent = 'Scroll to the top (“They measure…”) to see it.';
+  body.appendChild(hint);
+
+  /* ── Manual wiring section ─────────────────────────────────────── */
+  const rule = document.createElement('div');
+  rule.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
+  body.appendChild(rule);
+
+  const mkBtn = (label) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'font:inherit;font-weight:700;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.2);border-radius:8px;padding:6px 8px;cursor:pointer;';
+    return b;
+  };
+
+  const editBtn = mkBtn('✏️ Edit wiring: OFF');
+  editBtn.style.width = '100%';
+  body.appendChild(editBtn);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:none;grid-template-columns:1fr 1fr;gap:6px;';
+  const connectBtn = mkBtn('Connect');
+  const clearSelBtn = mkBtn('Clear pick');
+  const clearAllBtn = mkBtn('Wipe wiring');
+  connectBtn.style.gridColumn = '1 / -1';
+  connectBtn.style.background = '#E91E8C'; connectBtn.style.color = '#fff'; connectBtn.style.borderColor = '#E91E8C';
+  actions.append(connectBtn, clearSelBtn, clearAllBtn);
+  body.appendChild(actions);
+
+  const status = document.createElement('div');
+  status.style.cssText = 'font-size:11px;font-weight:600;color:#2E3542;';
+  body.appendChild(status);
+
+  const wiringLbl = document.createElement('div');
+  wiringLbl.style.cssText = 'font-size:10.5px;opacity:0.55;';
+  wiringLbl.textContent = 'Manual links (copy to bake in):';
+  const wiringOut = document.createElement('textarea');
+  wiringOut.readOnly = true; wiringOut.rows = 2;
+  wiringOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;';
+  wiringLbl.style.display = 'none'; wiringOut.style.display = 'none';
+  body.append(wiringLbl, wiringOut);
+
+  let editing = false;
+  const refreshStatus = () => {
+    const info = th.selectionInfo();
+    status.textContent = editing
+      ? `Picked ${info.count} · manual links ${info.manual}`
+      : `Manual links: ${th.getManual().length}`;
+    wiringOut.value = th.wiringText();
+  };
+  editBtn.addEventListener('click', () => {
+    editing = !editing;
+    th.setEditMode(editing);
+    editBtn.textContent = editing ? '✏️ Edit wiring: ON' : '✏️ Edit wiring: OFF';
+    editBtn.style.background = editing ? '#FCC30B' : '#fff';
+    actions.style.display = editing ? 'grid' : 'none';
+    hint.textContent = editing
+      ? 'Click dots to pick them, then Connect. They wire in click order.'
+      : 'Scroll to the top (“They measure…”) to see it.';
+    wiringLbl.style.display = editing ? 'block' : 'none';
+    wiringOut.style.display = editing ? 'block' : 'none';
+    refreshStatus();
+  });
+  connectBtn.addEventListener('click', () => { th.connectSelected(); refreshStatus(); });
+  clearSelBtn.addEventListener('click', () => { th.clearSelection(); refreshStatus(); });
+  clearAllBtn.addEventListener('click', () => { th.clearManual(); refreshStatus(); });
+  setInterval(() => { if (editing) refreshStatus(); }, 200);
+  refreshStatus();
+
+  let open = true;
+  const setOpen = (v) => { open = v; body.style.display = open ? 'flex' : 'none'; };
+  head.addEventListener('click', () => setOpen(!open));
+  window.addEventListener('keydown', (e) => { if (e.key === 'g' && !/input|textarea/i.test(e.target.tagName)) setOpen(!open); });
+
+  document.body.appendChild(wrap);
+}
+
 if (reduced) {
   document.getElementById('world').style.display = 'none';
   beatA.querySelectorAll('[data-hb]').forEach((el) => el.classList.add('in'));
@@ -882,6 +1240,7 @@ if (reduced) {
   onScroll();
 } else {
   three = initThree();
+  buildGUI(three);
   let f = 0;
   let lastT = performance.now();
 
@@ -916,6 +1275,9 @@ if (reduced) {
     if (!three) { return; }
     const th = three;
     const time = now / 1000;
+
+    /* manual wiring mode owns the frame: a locked, static ring to pick on */
+    if (th.isEditing()) { th.stepEdit(); return; }
 
     const targetZ = CAM_DIST - f * DEPTH;
     th.camZ = lerp(th.camZ, targetZ, 1 - Math.exp(-dt * 5));
@@ -955,18 +1317,14 @@ if (reduced) {
         P[k + 2] += (th.heroRing[k + 2] - A.pos[k + 2]) * wgt;
       }
     }
-    /* the anchors land as the ring settles, then the threads are drawn one
-       after another so you watch the interconnections being made. The web
-       is a fixed world layer, so it has to be gone by SCROLL_AT — it would
-       otherwise hang in the middle of the frame while the hero text
-       scrolls away underneath it. */
+    /* the threads are drawn between the field's own dots once the ring has
+       settled — the actual layout happens below, after idle breathing, so
+       the quads land exactly on the live dot positions. The web is a fixed
+       world layer, so it has to be gone by SCROLL_AT — it would otherwise
+       hang in the middle of the frame while the hero text scrolls away
+       underneath it. */
     const heroOut = clamp(1 - (f - 0.64) / 0.10);
-    const nodeFade = ease(clamp((th.heroP - 0.38) / 0.09)) * heroOut;
-    th.nodes.position.z = planeZ;
-    th.nodes.material.opacity = nodeFade;
-    th.links.position.z = planeZ;
-    th.links.material.opacity = heroOut;
-    if (heroOut > 0) th.drawLinks(clamp((th.heroP - 0.44) / 0.20));
+    th.links.material.opacity = heroOut * HERO_CFG.opacity;
 
     /* DASHBOARD: the stream actually flows, and pours into the card */
     {
@@ -1040,6 +1398,16 @@ if (reduced) {
     th.geo.attributes.position.needsUpdate = true;
     th.geo.attributes.color.needsUpdate = true;
 
+    /* hero threads: connect the field's own dots, using the final live
+       positions above (P already carries the plane offset + breathing, so
+       the mesh stays at z = 0). Only alive while the hero owns the screen. */
+    if (i === 0 && heroOut > 0) {
+      th.links.position.z = 0;
+      th.drawLinks(clamp((th.heroP - 0.44) / 0.20), P);
+    } else {
+      th.links.material.opacity = 0;
+    }
+
     th.renderer.render(th.scene3, th.camera);
   }
 
@@ -1050,4 +1418,5 @@ if (reduced) {
   requestAnimationFrame(frame);
   window.__tilliStep = step;
   window.__tilliThree = () => three;
+  window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
 }
