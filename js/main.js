@@ -25,8 +25,9 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
    Each `.scene` is an empty scroll spacer that owns a slice of the
    scrollbar; its `.stage` is position:fixed at the viewport. Sections
    dissolve into each other through the dot field rather than travelling —
-   with ONE deliberate exception: hero → dashboard is a plain scroll, so
-   the dashboard climbs in from the bottom of the screen (see SCROLL_AT).
+   with two deliberate exceptions around the empty CROSS screen: the hero
+   rides up and out as CROSS takes over, and the dashboard climbs in from
+   below as CROSS hands off to it (see SCROLL_AT and the climb-in block).
 
    Tunables:
      FADE_LEN   how long (in scene-units) a stage takes to fade in/out
@@ -35,16 +36,22 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
      STEP_FADE  same, for `.step` sub-panels inside one stage
      MORPH_AT   the point in a scene (0..1) where the dots stop holding
                 their formation and start morphing towards the next
-     SCROLL_AT  the point in the hero (0..1) where the scroll hand-over
-                to the dashboard begins — the only travelling boundary
+     SCROLL_AT  the Start fraction (0..1) where the hero rides up and out
      FIT_PAD    px of breathing room kept around a step when it has to
                 be scaled down to fit a short viewport
    ═══════════════════════════════════════════════════════════════════ */
 const FADE_LEN = 0.12;
 const FADE_OVER = 0.04;
 const STEP_FADE = 0.22;
-const MORPH_AT = 0.68;
-const SCROLL_AT = 0.74;
+/* The flow spans three scenes now: Start (ring) → Cross (the dots cross
+   paths, a dedicated empty screen) → Dashboard (they pour into the card).
+   MORPH_AT / SCROLL_AT are Start-scene fractions: where the dots begin
+   leaving the ring, and where the hero content rides up and out. The
+   "Space between sections" slider sizes the CROSS scene — the crossing
+   space itself (see setCrossVH). */
+const MORPH_AT = 0.68;   // Start fraction where the dots start leaving the ring
+const SCROLL_AT = 0.74;  // Start fraction where the hero content rides up and out
+let CROSS_VH = 150;      // Cross-scene scroll length (vh) — driven by the GUI slider
 const FIT_PAD = 34;
 
 /* ── Scene registry (DOM order = station order) ───────────────────── */
@@ -96,6 +103,17 @@ function fitSteps() {
     const k = h > avail ? Math.max(0.5, avail / h) : 1;
     inner.style.transform = k < 1 ? `scale(${k.toFixed(4)})` : 'none';
   }));
+}
+
+/* Set the Cross-scene height (vh) — the scroll length of the dedicated
+   crossing screen between "They measure…" and "Schools see…". Bigger = more
+   room for the dots to cross before the dashboard climbs in. */
+function setCrossVH(vh) {
+  CROSS_VH = clamp(vh, 60, 400);
+  const s = scenes[ST['Cross']];
+  if (s) s.el.style.height = `${Math.round(CROSS_VH)}vh`;
+  measure();
+  if (typeof onScroll === 'function') onScroll();
 }
 
 /* f is continuous scene-space: f = i + (progress through scene i). */
@@ -264,22 +282,33 @@ function buildHeroNetwork(cfg) {
   return { count, nodeIdx, nodeAng, links, branchIdx, branchAng };
 }
 
-/* place the network's dots: rim nodes on the ellipse, leaves just outside
-   it, everyone else loosened into a wide, airy halo behind. Sized off the
-   camera frustum (re-run on resize) so the rim always lands near the frame
-   edge, clear of the copy. */
+/* place the network's dots: rim nodes stay EXACTLY on the ellipse (so the
+   wired web keeps its shape), leaves just outside it. Everyone else is
+   PARKED on their half's path arc — the ring is literally the head of the
+   two flow queues. Every dot (wired ones included) gets a side + queue
+   slot from its ring angle, so the whole field knows where to flow.
+   Re-run on resize so the rim always lands near the frame edge. */
 function layoutHeroRing(ring) {
-  const v = visHalf(-3);
+  layoutDashPaths();
+  const v = visHalf(RING_Z);
   const rx = Math.min(v.w * 0.86, 21) * HERO_CFG.ringScale, ry = v.h * 0.8 * HERO_CFG.ringScale;
   const r = rng(12);
   const net = heroNet;
   const special = new Uint8Array(N);
+  const setQueue = (i, ang) => {
+    const m = angleToQueue(ang);
+    dotSide[i] = m.side;
+    dotQ[i] = m.q;
+  };
   for (let k = 0; k < net.nodeIdx.length; k++) {
     const i = net.nodeIdx[k];
     special[i] = 1;
     ring[i * 3] = Math.cos(net.nodeAng[k]) * rx;
     ring[i * 3 + 1] = Math.sin(net.nodeAng[k]) * ry;
-    ring[i * 3 + 2] = -3;
+    ring[i * 3 + 2] = RING_Z;
+    setQueue(i, net.nodeAng[k]);
+    /* wired nodes carry no jitter — they must sit dead on the rim */
+    dashJit[i * 3] = dashJit[i * 3 + 1] = dashJit[i * 3 + 2] = 0;
   }
   for (let b = 0; b < net.branchIdx.length; b++) {
     const i = net.branchIdx[b];
@@ -287,60 +316,145 @@ function layoutHeroRing(ring) {
     const ba = net.branchAng[b];
     ring[i * 3] = Math.cos(ba.ang) * rx * ba.rad;
     ring[i * 3 + 1] = Math.sin(ba.ang) * ry * ba.rad;
-    ring[i * 3 + 2] = -3;
+    ring[i * 3 + 2] = RING_Z;
+    setQueue(i, ba.ang);
+    dashJit[i * 3] = dashJit[i * 3 + 1] = dashJit[i * 3 + 2] = 0;
   }
+  const p = [0, 0, 0];
   for (let i = 0; i < N; i++) {
     if (special[i]) continue;
-    const jit = r(), spread = r(), depth = r();
+    const jit = r(), jx = r(), jy = r(), jz = r();
     const ang = (i / N) * Math.PI * 2 + (jit - 0.5) * 0.55;
-    const rad = 0.72 + spread * 0.5;
-    ring[i * 3] = Math.cos(ang) * rx * rad;
-    ring[i * 3 + 1] = Math.sin(ang) * ry * rad;
-    ring[i * 3 + 2] = -2 - depth * 5;
+    setQueue(i, ang);
+    dashJit[i * 3] = (jx - 0.5) * 3.2;
+    dashJit[i * 3 + 1] = (jy - 0.5) * 2.4;
+    dashJit[i * 3 + 2] = (jz - 0.5) * 2;
+    /* parked exactly where its queue slot sits on the path (wide band) —
+       so "start flowing" is just this same point with a larger t */
+    dashPoint(dotSide[i], dotQ[i], i * 3, p);
+    ring[i * 3] = p[0];
+    ring[i * 3 + 1] = p[1];
+    ring[i * 3 + 2] = p[2];
   }
 }
 
-/* Dashboard flow path, in world units at the dot plane. The airborne part
-   is expressed as viewport fractions so the sweep keeps its shape at any
-   aspect; the landing is anchored to the dashboard card's real layout box
-   so the dots always aim at its right edge, whatever size it renders at. */
+/* Dashboard flow: TWO crossing paths, and the hero ring IS their head.
+   Each path = an auto-generated arc along one half of the ring (red = left
+   half, blue = right half, both running top → bottom) + the hand-drawn flow
+   tail below it. Every non-wired ring dot is PARKED on its half's arc — a
+   queue standing on the path — so the hand-over is nothing but the whole
+   queue advancing: dots move immediately, divide by which half they stood
+   in, cross in the middle, and enter the card from opposite sides.
+   Flow control points are viewport fractions [x,y] (0..1, top-left origin)
+   so the shape survives any aspect AND can be dragged by the path editor.
+   To bake an edited layout, copy the editor's textarea over DASH_PATHS. */
 const STREAM_Z = -5.5;
-const streamPath = [];
-/* the card's resting box — measured with its scroll-driven scale(0.88→1)
-   temporarily off, so the target doesn't drift as the card zooms */
-function cardBox() {
-  const el = document.querySelector('[data-zoom]');
-  if (!el) return null;
-  const prev = el.style.transform;
-  el.style.transform = 'none';
-  const r = el.getBoundingClientRect();
-  el.style.transform = prev;
-  return r.width > 0 ? r : null;
+const RING_Z = -3;        // the ring's dot plane — the arc portion sits here
+const DASH_ROLL = 1.2;    // depth roll (world units) so the flow ribbon isn't flat
+const DASH_STEPS = 96;    // spline samples per path — resolution of the flow line
+const DASH_SPEED = 0.07;  // how fast dots cycle along the flow (cycles/sec)
+const RING_JIT = 2.4;     // band width while parked in the ring (× base jitter)
+const FLOW_JIT = 0.3;     // band width once flowing into the card (× base jitter)
+const ARC_PTS = 6;        // control points auto-laid along each ring half
+const ARC_CUT = 0.55;     // radians trimmed off the ring bottom where the flow tail takes over
+/* The flow is one continuous progress φ (0 = parked ring, 1 = poured into
+   the card) driven across three scenes. FLOW_CROSS is φ when the CROSS
+   screen is centred — i.e. how far along the flow the crossing sits. */
+const FLOW_CROSS = 0.5;
+/* Tails in viewport fractions [x,y] (0..1). The 2nd point of each is the
+   SHARED crossing point — both paths pass through it, so they cross there,
+   on-screen, in the empty band between the two sections. Drag that middle
+   handle to move where they cross. Left arc → arches up, crosses centre,
+   dives into the card's RIGHT edge; right arc → mirror, card's LEFT edge. */
+const DASH_PATHS = {
+  red:  [[0.300, 0.800], [0.500, 0.640], [0.620, 0.740], [0.670, 0.900]],
+  blue: [[0.700, 0.800], [0.500, 0.640], [0.380, 0.740], [0.330, 0.900]],
+};
+/* world-space polylines the dots actually follow, rebuilt from the ring
+   geometry + DASH_PATHS. DASH_R = path param where the arc ends, DASH_CS =
+   param where the flow tail starts (the steady-state cycle band is
+   [DASH_CS, 1], whose head point sits just off-screen so the wrap is
+   invisible). Queue travel is exactly DASH_CS, so a fully-advanced queue
+   lands exactly on the cycle band. */
+const dashLine = { red: [], blue: [] };
+let DASH_R = 0, DASH_CS = 0;
+/* per-dot queue state, filled by layoutHeroRing */
+const dotSide = new Uint8Array(N);   // 0 = red (left half), 1 = blue (right)
+const dotQ = new Float32Array(N);    // parked param along the path, ∈ [0, DASH_R]
+const dashJit = new Float32Array(N * 3);
+
+function catmull(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t;
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }
-function layoutStream() {
-  const W = window.innerWidth, H = window.innerHeight;
-  /* only trust a measurement taken against a real viewport, and clamp it —
-     a card caught mid-layout must not fling the flow off into nowhere */
-  const r = W > 0 && H > 0 ? cardBox() : null;
-  /* right edge, a little below the card's middle — where the arrow lands */
-  const edgeX = r ? clamp(r.right / W, 0.45, 0.97) : 0.75;
-  const edgeY = r ? clamp((r.top + r.height * 0.58) / H, 0.2, 0.88) : 0.6;
-  /* in high on the right, round the shoulder, then level off into the card.
-     The final two points are inside the card, hidden behind it. */
-  const pts = [
-    [0.930, -0.15], [0.955, 0.03], [0.968, 0.19], [0.968, 0.32],
-    [0.950, 0.44], [0.912, 0.545], [0.852, 0.605], [edgeX, edgeY],
-    [edgeX - 0.07, edgeY], [edgeX - 0.15, edgeY],
-  ];
-  streamPath.length = 0;
-  for (let k = 0; k < pts.length; k++) {
-    /* a shallow depth roll keeps the ribbon from reading as flat. The
-       fraction→world conversion has to use each point's OWN depth, or the
-       roll throws the arc off the side of the frame. */
-    const z = STREAM_Z + Math.sin((k / (pts.length - 1)) * Math.PI) * 1.2;
-    const v = visHalf(z);
-    streamPath.push([(pts[k][0] - 0.5) * 2 * v.w, -(pts[k][1] - 0.5) * 2 * v.h, z]);
+/* sample a control-point list at u∈[0,1] over the whole path → fraction [x,y] */
+function sampleFrac(pts, u) {
+  const n = pts.length - 1;
+  const seg = Math.min(Math.floor(u * n), n - 1), lt = u * n - seg;
+  const p0 = pts[Math.max(0, seg - 1)], p1 = pts[seg], p2 = pts[seg + 1], p3 = pts[Math.min(n, seg + 2)];
+  return [catmull(p0[0], p1[0], p2[0], p3[0], lt), catmull(p0[1], p1[1], p2[1], p3[1], lt)];
+}
+/* the ring-half arc, as viewport-fraction control points matching the rim
+   ellipse exactly (red sweeps top→left→bottom, blue top→right→bottom) */
+function ringArcFracs(side) {
+  const v = visHalf(RING_Z);
+  const rx = Math.min(v.w * 0.86, 21) * HERO_CFG.ringScale, ry = v.h * 0.8 * HERO_CFG.ringScale;
+  const fx = rx / (2 * v.w), fy = ry / (2 * v.h);
+  const a0 = Math.PI / 2;
+  const a1 = side ? -Math.PI / 2 + ARC_CUT : 3 * Math.PI / 2 - ARC_CUT;
+  const pts = [];
+  for (let k = 0; k < ARC_PTS; k++) {
+    const a = a0 + (a1 - a0) * (k / (ARC_PTS - 1));
+    pts.push([0.5 + Math.cos(a) * fx, 0.5 - Math.sin(a) * fy]);
   }
+  return pts;
+}
+function compositeFracs(side) {
+  return ringArcFracs(side).concat(DASH_PATHS[side ? 'blue' : 'red']);
+}
+function layoutDashPaths() {
+  for (const side of [0, 1]) {
+    const pts = compositeFracs(side);
+    const nSeg = pts.length - 1;
+    DASH_R = (ARC_PTS - 1) / nSeg;
+    DASH_CS = ARC_PTS / nSeg;
+    const line = side ? dashLine.blue : dashLine.red;
+    line.length = 0;
+    for (let s = 0; s <= DASH_STEPS; s++) {
+      const u = s / DASH_STEPS;
+      const f = sampleFrac(pts, u);
+      /* the arc rides the ring plane; the tail eases down to the stream
+         plane with a shallow roll so the ribbon isn't flat. The frac→world
+         conversion uses each sample's OWN depth. */
+      const fu = clamp((u - DASH_R) / (1 - DASH_R));
+      const z = lerp(RING_Z, STREAM_Z, smooth(clamp(fu * 2))) + Math.sin(fu * Math.PI) * DASH_ROLL;
+      const v = visHalf(z);
+      line.push([(f[0] - 0.5) * 2 * v.w, -(f[1] - 0.5) * 2 * v.h, z]);
+    }
+  }
+}
+/* position on a path at param t (0 = ring top, DASH_R = ring bottom, 1 =
+   inside the card). The jitter band is wide while parked and tightens as
+   the flow funnels in. */
+function dashPoint(side, t, j3, out) {
+  const line = side ? dashLine.blue : dashLine.red;
+  const SEG = line.length - 1;
+  const tc = clamp(t);
+  const seg = Math.min(Math.floor(tc * SEG), SEG - 1), tt = tc * SEG - seg;
+  const a = line[seg], b = line[seg + 1];
+  const j = lerp(RING_JIT, FLOW_JIT, smooth(clamp((tc - DASH_R) / ((1 - DASH_R) * 0.7))));
+  out[0] = lerp(a[0], b[0], tt) + dashJit[j3] * j;
+  out[1] = lerp(a[1], b[1], tt) + dashJit[j3 + 1] * j;
+  out[2] = lerp(a[2], b[2], tt) + dashJit[j3 + 2] * j;
+}
+/* which half a ring angle belongs to, and its queue slot along that half */
+function angleToQueue(theta) {
+  let a = theta % (2 * Math.PI);
+  if (a < 0) a += 2 * Math.PI;
+  if (a >= 3 * Math.PI / 2) a -= 2 * Math.PI;   // → [-π/2, 3π/2)
+  const span = Math.PI - ARC_CUT;
+  if (a > Math.PI / 2) return { side: 0, q: clamp((a - Math.PI / 2) / span) * DASH_R };
+  return { side: 1, q: clamp((Math.PI / 2 - a) / span) * DASH_R };
 }
 
 function buildFormations() {
@@ -368,43 +482,40 @@ function buildFormations() {
   const heroRing = new Float32Array(N * 3);
   layoutHeroRing(heroRing);
 
-  /* 1 · DASHBOARD — a stream that pours into the dashboard card: in off
-       the top-right corner, out around the right shoulder of the frame,
-       then a turn left that drives straight into the card's right edge.
-       The last waypoints sit inside the card, and the card (.content,
-       z-index 2) paints over the canvas (#world, z-index 1) — so the dots
-       are physically swallowed at its edge with no fade needed. */
-  const streamT = new Float32Array(N);
-  const streamJit = new Float32Array(N * 3);
-  const streamPoint = (t, j3, out) => {
-    const SEG = streamPath.length - 1;
-    const seg = Math.min(Math.floor(t * SEG), SEG - 1), tt = t * SEG - seg;
-    const a = streamPath[seg], b = streamPath[seg + 1];
-    /* the band tightens over the run-in so the flow funnels into the card
-       rather than arriving as a wide smear */
-    const j = lerp(1, 0.3, smooth(clamp((t - 0.5) / 0.5)));
-    out[0] = lerp(a[0], b[0], tt) + streamJit[j3] * j;
-    out[1] = lerp(a[1], b[1], tt) + streamJit[j3 + 1] * j;
-    out[2] = lerp(a[2], b[2], tt) + streamJit[j3 + 2] * j;
-  };
+  /* 1 · CROSS — the dedicated crossing screen. A fallback formation only:
+       the step loop overrides positions with the live flow, so these are
+       just the mid-flow crossing state, tinted with the same rainbow so the
+       field's colour is continuous through the hand-over. */
+  {
+    const cross = make();
+    const p = [0, 0, 0];
+    for (let i = 0; i < N; i++) {
+      dashPoint(dotSide[i], clamp(dotQ[i] + DASH_CS * FLOW_CROSS), i * 3, p);
+      setP(cross, i, p[0], p[1], p[2]);
+      setC(cross, i, MIX[i % 5]);
+    }
+    F.push(cross);
+  }
+
+  /* 2 · DASHBOARD — the two queues, fully advanced: every dot somewhere on
+       its flow tail's cycle band [DASH_CS, 1], frozen at time 0. This is the
+       formation the base morph blends toward; the step loop overrides it
+       with the live queue/cycle animation. The last waypoints sit inside
+       the card, and the card (.content, z-index 2) paints over the canvas
+       (#world, z-index 1) — so the dots are physically swallowed at its
+       edge with no fade needed. */
+  const streamT = new Float32Array(N);   // flow-cycle phase = queue order, ∈ [0,1]
   const dash = make();
   const relayoutDash = () => {
     const p = [0, 0, 0];
     for (let i = 0; i < N; i++) {
-      streamPoint(streamT[i], i * 3, p);
+      streamT[i] = DASH_R > 0 ? dotQ[i] / DASH_R : 0;
+      dashPoint(dotSide[i], DASH_CS + streamT[i] * (1 - DASH_CS), i * 3, p);
       setP(dash, i, p[0], p[1], p[2]);
     }
   };
   {
-    const r = rng(22);
-    for (let i = 0; i < N; i++) {
-      streamT[i] = r();
-      streamJit[i * 3] = (r() - 0.5) * 3.2;
-      streamJit[i * 3 + 1] = (r() - 0.5) * 2.4;
-      streamJit[i * 3 + 2] = (r() - 0.5) * 2;
-      setC(dash, i, MIX[i % 5]);
-    }
-    layoutStream();
+    for (let i = 0; i < N; i++) setC(dash, i, MIX[i % 5]);
     relayoutDash();
     F.push(dash);
   }
@@ -571,7 +682,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, dnaThresh, streamT, streamJit, streamPoint, relayoutDash };
+  return { F, heroRing, dnaThresh, streamT, relayoutDash };
 }
 
 function initThree() {
@@ -807,9 +918,8 @@ function initThree() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     spreadHero(built.F[0].pos);
     layoutHeroRing(built.heroRing);
-    /* the flow is aimed at the card, so it has to be re-aimed when the
-       card moves or resizes under it */
-    layoutStream();
+    /* layoutHeroRing re-lays the paths too (they're fraction-based, so the
+       world polylines must track the viewport aspect) */
     built.relayoutDash();
   });
 
@@ -921,28 +1031,29 @@ function onScroll() {
   curScene = i;
 
   /* ── stage + step cross-fades ──────────────────────────────────── */
-  /* HERO → DASHBOARD is the one boundary that scrolls instead of
-     dissolving: over the hero's last stretch the hero rides up and out
-     while the dashboard climbs in from below, both at full opacity. */
-  const travel = smooth(clamp((f - SCROLL_AT) / (1 - SCROLL_AT)));
-  const travelling = f > SCROLL_AT && f < 1;
+  /* Two travelling boundaries now that an empty CROSS screen sits between
+     hero and dashboard: the hero rides up and out over the Start tail as
+     the crossing screen takes over, and the dashboard climbs in from below
+     over the Cross tail. The dots carry the continuity across both. */
+  const crossI = ST['Cross'], dashI = ST['Dashboard'];
+  const heroUp = smooth(clamp((f - SCROLL_AT) / (crossI - SCROLL_AT)));
+  const CLIMB = 0.5;
+  const dashUp = smooth(clamp((f - (dashI - CLIMB)) / CLIMB));
 
   scenes.forEach((sc, k) => {
     const a = k === 0 ? -FADE_LEN * 1.5 : k - FADE_OVER;
     let op = smooth(clamp((f - a) / FADE_LEN));
     if (k < LAST) op *= 1 - smooth(clamp((f - (k + 1 - FADE_LEN)) / FADE_LEN));
 
-    /* the travelling pair leaves and enters by moving, so neither one is
-       allowed to dissolve across this boundary */
+    /* the travelling scenes leave and enter by moving, so they hold full
+       opacity across their boundary instead of dissolving */
     let ty = 0;
-    if (k === 0 && f < 1) {
-      ty = -travel;
-      if (travelling) op = 1;
-    } else if (k === 1) {
-      if (f < 1) ty = 1 - travel;
-      /* full strength from the moment it starts climbing, right through
-         to its own (unchanged) dissolve into Reports */
-      if (f > SCROLL_AT) op = 1 - smooth(clamp((f - (2 - FADE_LEN)) / FADE_LEN));
+    if (k === 0) {
+      ty = -heroUp;                                  // hero rides up and out
+      if (f > SCROLL_AT && f < crossI) op = 1;
+    } else if (k === dashI) {
+      if (f < dashI) ty = 1 - dashUp;                // dashboard climbs in from below
+      if (f > dashI - CLIMB) op = 1 - smooth(clamp((f - (dashI + 1 - FADE_LEN)) / FADE_LEN));
     }
     if (sc.stage && ty !== sc.ty) {
       sc.stage.style.transform = ty ? `translate3d(0, ${(ty * 100).toFixed(3)}%, 0)` : '';
@@ -1065,11 +1176,106 @@ function runPin(sc, p) {
    FRAME LOOP
    ═══════════════════════════════════════════════════════════════════ */
 /* heights decide both the scroll map and the fit-to-viewport scaling, so
-   re-measure once webfonts and images have settled */
-measure();
+   re-measure once webfonts and images have settled. setCrossVH sizes the
+   Cross scene and measures. */
+setCrossVH(CROSS_VH);
 window.addEventListener('resize', measure);
 window.addEventListener('load', measure);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
+
+/* ═══════════════════════════════════════════════════════════════════
+   PATH EDITOR — a full-screen SVG overlay with draggable control points
+   for the two crossing dashboard paths. Dragging a handle rewrites the
+   fractions in DASH_PATHS, rebuilds the world polylines, and the dots
+   follow live. Copy the baked text from the GUI to hardcode a layout.
+   ═══════════════════════════════════════════════════════════════════ */
+function pathsText() {
+  const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
+  return `red:  ${f(DASH_PATHS.red)},\nblue: ${f(DASH_PATHS.blue)},`;
+}
+function buildPathEditor(th) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const COLORS = { red: '#E4322B', blue: '#2E6BE6' };
+  const W = () => window.innerWidth, H = () => window.innerHeight;
+
+  const svg = document.createElementNS(NS, 'svg');
+  svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:54;pointer-events:none;display:none;';
+  document.body.appendChild(svg);
+
+  const curve = {}, handles = { red: [], blue: [] };
+  for (const key of ['red', 'blue']) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', COLORS[key]);
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('opacity', '0.92');
+    svg.appendChild(path);
+    curve[key] = path;
+  }
+
+  let active = null, onChange = null;
+  /* a dragged tail bends the last arc segment too (Catmull-Rom neighbours),
+     so the parked ring must be re-laid along with the polylines */
+  const apply = () => { layoutHeroRing(th.heroRing); th.relayoutDash(); redraw(); if (onChange) onChange(); };
+
+  function redraw() {
+    const w = W(), h = H();
+    for (const key of ['red', 'blue']) {
+      /* draw the WHOLE composite (ring arc + tail) for context; only the
+         tail points get drag handles — the arc follows the ring itself */
+      const comp = compositeFracs(key === 'blue' ? 1 : 0);
+      let d = '';
+      for (let s = 0; s <= DASH_STEPS; s++) {
+        const p = sampleFrac(comp, s / DASH_STEPS);
+        d += `${s ? 'L' : 'M'}${(p[0] * w).toFixed(1)} ${(p[1] * h).toFixed(1)} `;
+      }
+      curve[key].setAttribute('d', d);
+      const last = DASH_PATHS[key].length - 1;
+      handles[key].forEach((c, idx) => {
+        c.setAttribute('cx', DASH_PATHS[key][idx][0] * w);
+        c.setAttribute('cy', DASH_PATHS[key][idx][1] * h);
+        /* filled handle = the endpoint that drives into the card */
+        c.setAttribute('fill', idx === last ? COLORS[key] : '#fff');
+      });
+    }
+  }
+
+  for (const key of ['red', 'blue']) {
+    handles[key] = DASH_PATHS[key].map((_, idx) => {
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('r', '9');
+      c.setAttribute('stroke', COLORS[key]);
+      c.setAttribute('stroke-width', '3');
+      c.style.cssText = 'pointer-events:auto;cursor:grab;';
+      c.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        active = { key, idx };
+        c.style.cursor = 'grabbing';
+        c.setPointerCapture(e.pointerId);
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!active || active.key !== key || active.idx !== idx) return;
+        DASH_PATHS[key][idx] = [clamp(e.clientX / W()), clamp(e.clientY / H())];
+        apply();
+      });
+      c.addEventListener('pointerup', (e) => {
+        active = null; c.style.cursor = 'grab';
+        try { c.releasePointerCapture(e.pointerId); } catch (_) { /* fine */ }
+      });
+      svg.appendChild(c);
+      return c;
+    });
+  }
+
+  window.addEventListener('resize', () => { if (svg.style.display !== 'none') redraw(); });
+  redraw();
+
+  return {
+    show(v) { svg.style.display = v ? 'block' : 'none'; if (v) redraw(); },
+    setOnChange(fn) { onChange = fn; },
+  };
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    GUI — live controls for the hero connection network. Vanilla DOM so it
@@ -1091,7 +1297,7 @@ function buildGUI(th) {
 
   const head = document.createElement('div');
   head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer;font-weight:700;letter-spacing:0.02em;';
-  head.innerHTML = '<span>Connections</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
+  head.innerHTML = '<span>Dashboard flow</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
   wrap.appendChild(head);
 
   const body = document.createElement('div');
@@ -1120,48 +1326,6 @@ function buildGUI(th) {
     return r;
   };
 
-  const rebuild = () => th.rebuildHeroNetwork();
-
-  /* auto-wiring toggle: OFF (default) = a bare ring of dots to wire by hand */
-  const autoRow = document.createElement('label');
-  autoRow.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer;';
-  const autoBox = document.createElement('input');
-  autoBox.type = 'checkbox'; autoBox.checked = HERO_CFG.autoWire;
-  autoBox.style.cssText = 'accent-color:#E91E8C;width:15px;height:15px;';
-  autoBox.addEventListener('change', () => { HERO_CFG.autoWire = autoBox.checked; rebuild(); });
-  const autoTxt = document.createElement('span'); autoTxt.textContent = 'Auto-generate wiring';
-  autoRow.append(autoBox, autoTxt);
-  body.appendChild(autoRow);
-
-  row('Connected dots', () => HERO_CFG.count, (v) => { HERO_CFG.count = Math.round(v); rebuild(); }, 3, 40, 1);
-  row('Links per dot', () => HERO_CFG.linksPerNode, (v) => { HERO_CFG.linksPerNode = Math.round(v); rebuild(); }, 1, 6, 1);
-  row('Skip connections', () => HERO_CFG.skip, (v) => { HERO_CFG.skip = v; rebuild(); }, 0, 0.9, 0.05);
-  row('Spacing jitter', () => HERO_CFG.spacing, (v) => { HERO_CFG.spacing = v; rebuild(); }, 0, 1, 0.05);
-  row('Branch dots', () => HERO_CFG.branches, (v) => { HERO_CFG.branches = Math.round(v); rebuild(); }, 0, 20, 1);
-  row('Line thickness', () => HERO_CFG.thickness, (v) => { HERO_CFG.thickness = v; }, 0.02, 0.5, 0.005);
-  row('Line opacity', () => HERO_CFG.opacity, (v) => { HERO_CFG.opacity = v; }, 0, 1, 0.05);
-  row('Ring size', () => HERO_CFG.ringScale, (v) => { HERO_CFG.ringScale = v; rebuild(); }, 0.5, 1.4, 0.02);
-
-  const cRow = document.createElement('label');
-  cRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
-  cRow.innerHTML = '<span>Line color</span>';
-  const color = document.createElement('input');
-  color.type = 'color'; color.value = HERO_CFG.color;
-  color.style.cssText = 'width:40px;height:22px;border:none;background:none;padding:0;cursor:pointer;';
-  color.addEventListener('input', () => { HERO_CFG.color = color.value; th.links.material.color.set(color.value); });
-  cRow.appendChild(color);
-  body.appendChild(cRow);
-
-  const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:10.5px;opacity:0.5;';
-  hint.textContent = 'Scroll to the top (“They measure…”) to see it.';
-  body.appendChild(hint);
-
-  /* ── Manual wiring section ─────────────────────────────────────── */
-  const rule = document.createElement('div');
-  rule.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
-  body.appendChild(rule);
-
   const mkBtn = (label) => {
     const b = document.createElement('button');
     b.textContent = label;
@@ -1169,59 +1333,50 @@ function buildGUI(th) {
     return b;
   };
 
-  const editBtn = mkBtn('✏️ Edit wiring: OFF');
-  editBtn.style.width = '100%';
-  body.appendChild(editBtn);
+  /* ── Space between the two sections ─────────────────────────────────
+     Sizes the dedicated CROSS screen between "They measure…" and "Schools
+     see…" — the scroll length the dots have to cross paths in. */
+  row('Space between sections', () => CROSS_VH, (v) => setCrossVH(v), 60, 400, 10);
 
-  const actions = document.createElement('div');
-  actions.style.cssText = 'display:none;grid-template-columns:1fr 1fr;gap:6px;';
-  const connectBtn = mkBtn('Connect');
-  const clearSelBtn = mkBtn('Clear pick');
-  const clearAllBtn = mkBtn('Wipe wiring');
-  connectBtn.style.gridColumn = '1 / -1';
-  connectBtn.style.background = '#E91E8C'; connectBtn.style.color = '#fff'; connectBtn.style.borderColor = '#E91E8C';
-  actions.append(connectBtn, clearSelBtn, clearAllBtn);
-  body.appendChild(actions);
+  const gapHint = document.createElement('div');
+  gapHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
+  gapHint.textContent = 'Height (vh) of the crossing screen where the dots cross paths.';
+  body.appendChild(gapHint);
 
-  const status = document.createElement('div');
-  status.style.cssText = 'font-size:11px;font-weight:600;color:#2E3542;';
-  body.appendChild(status);
+  const rule2 = document.createElement('div');
+  rule2.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
+  body.appendChild(rule2);
 
-  const wiringLbl = document.createElement('div');
-  wiringLbl.style.cssText = 'font-size:10.5px;opacity:0.55;';
-  wiringLbl.textContent = 'Manual links (copy to bake in):';
-  const wiringOut = document.createElement('textarea');
-  wiringOut.readOnly = true; wiringOut.rows = 2;
-  wiringOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;';
-  wiringLbl.style.display = 'none'; wiringOut.style.display = 'none';
-  body.append(wiringLbl, wiringOut);
+  /* ── Editable dot paths ─────────────────────────────────────────────
+     Draggable red/blue control points for the two crossing streams. */
+  const pathEd = buildPathEditor(th);
+  const pathBtn = mkBtn('✏️ Edit dashboard paths: OFF');
+  pathBtn.style.width = '100%';
+  body.appendChild(pathBtn);
 
-  let editing = false;
-  const refreshStatus = () => {
-    const info = th.selectionInfo();
-    status.textContent = editing
-      ? `Picked ${info.count} · manual links ${info.manual}`
-      : `Manual links: ${th.getManual().length}`;
-    wiringOut.value = th.wiringText();
-  };
-  editBtn.addEventListener('click', () => {
-    editing = !editing;
-    th.setEditMode(editing);
-    editBtn.textContent = editing ? '✏️ Edit wiring: ON' : '✏️ Edit wiring: OFF';
-    editBtn.style.background = editing ? '#FCC30B' : '#fff';
-    actions.style.display = editing ? 'grid' : 'none';
-    hint.textContent = editing
-      ? 'Click dots to pick them, then Connect. They wire in click order.'
-      : 'Scroll to the top (“They measure…”) to see it.';
-    wiringLbl.style.display = editing ? 'block' : 'none';
-    wiringOut.style.display = editing ? 'block' : 'none';
-    refreshStatus();
+  const pathHint = document.createElement('div');
+  pathHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
+  pathHint.textContent = 'Drag the red/blue dots to reshape the crossing paths. Scroll into the dashboard hand-over to watch the dots follow.';
+  pathHint.style.display = 'none';
+  body.appendChild(pathHint);
+
+  const pathOut = document.createElement('textarea');
+  pathOut.readOnly = true; pathOut.rows = 3;
+  pathOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;display:none;';
+  pathOut.value = pathsText();
+  body.appendChild(pathOut);
+  pathEd.setOnChange(() => { pathOut.value = pathsText(); });
+
+  let editingPaths = false;
+  pathBtn.addEventListener('click', () => {
+    editingPaths = !editingPaths;
+    pathEd.show(editingPaths);
+    pathBtn.textContent = editingPaths ? '✏️ Edit dashboard paths: ON' : '✏️ Edit dashboard paths: OFF';
+    pathBtn.style.background = editingPaths ? '#FCC30B' : '#fff';
+    pathHint.style.display = editingPaths ? 'block' : 'none';
+    pathOut.style.display = editingPaths ? 'block' : 'none';
+    pathOut.value = pathsText();
   });
-  connectBtn.addEventListener('click', () => { th.connectSelected(); refreshStatus(); });
-  clearSelBtn.addEventListener('click', () => { th.clearSelection(); refreshStatus(); });
-  clearAllBtn.addEventListener('click', () => { th.clearManual(); refreshStatus(); });
-  setInterval(() => { if (editing) refreshStatus(); }, 200);
-  refreshStatus();
 
   let open = true;
   const setOpen = (v) => { open = v; body.style.display = open ? 'flex' : 'none'; };
@@ -1323,29 +1478,51 @@ if (reduced) {
        world layer, so it has to be gone by SCROLL_AT — it would otherwise
        hang in the middle of the frame while the hero text scrolls away
        underneath it. */
-    const heroOut = clamp(1 - (f - 0.64) / 0.10);
+    /* fade the web out across the morph lead-in → scroll hand-over, so it's
+       gone by the time the flow gets going (tracks the dynamic gap) */
+    const webStart = MORPH_AT - 0.04;
+    const heroOut = clamp(1 - (f - webStart) / (SCROLL_AT - webStart));
     th.links.material.opacity = heroOut * HERO_CFG.opacity;
 
-    /* DASHBOARD: the stream actually flows, and pours into the card */
+    /* FLOW: the ring is the head of two queues. One continuous progress φ
+       carries the field across THREE scenes — leave the ring in the Start
+       tail, CROSS paths on the dedicated Cross screen (φ ≈ FLOW_CROSS), then
+       pour into the card as the Dashboard climbs in. Left half rides red,
+       right half blue; the paths cross in the middle. */
     {
-      const dashI = ST['Dashboard'];
-      const incoming = si === dashI - 1;
-      /* on the way in the flow takes the field over a little ahead of the
-         base morph, so the shape you see settling is the curve, not a
-         diagonal slide from the hero ring */
-      const wgt = incoming ? smooth(clamp(S.wt / 0.8)) : hold(dashI);
-      if (wgt > 0.01) {
-        /* every dot is held at the mouth of the curve as the hero lets go
-           and released down it as the handover completes — the field
-           arrives by pouring in from the top-right, not by teleporting */
-        const pour = incoming ? smooth(S.wt) : 1;
+      const crossI = ST['Cross'], dashI = ST['Dashboard'];
+      /* f-axis anchors: begin leaving the ring at the Start morph point,
+         hit the crossing centred on the Cross screen, finish just inside
+         the Dashboard */
+      const fLeave = MORPH_AT;          // Start is scene 0, so abs f == fraction
+      const fCross = crossI + 0.5;
+      const fArrive = dashI + 0.12;
+      let phi;                          // 0 = ring, FLOW_CROSS = crossing, 1 = card
+      if (f <= fLeave) phi = 0;
+      else if (f <= fCross) phi = FLOW_CROSS * smooth((f - fLeave) / (fCross - fLeave));
+      else phi = FLOW_CROSS + (1 - FLOW_CROSS) * smooth(clamp((f - fCross) / (fArrive - fCross)));
+      /* engage the override over the whole flow, then release it as the
+         Dashboard hands over to Reports */
+      const engage = si >= dashI ? hold(dashI) : smooth(clamp((f - fLeave) / 0.12));
+      if (engage > 0.01) {
+        const travel = phi * DASH_CS;
+        /* the endless card-cycle only takes over once the pour is basically
+           done, so the crossing itself stays scrubbable (no drift) */
+        const settle = smooth(clamp((phi - 0.75) / 0.25));
         for (let n = 0; n < N; n++) {
           const k = n * 3;
-          const t2 = ((th.streamT[n] + time * 0.07) % 1) * pour;
-          th.streamPoint(t2, k, sp);
-          P[k] = lerp(P[k], sp[0], wgt);
-          P[k + 1] = lerp(P[k + 1], sp[1], wgt);
-          P[k + 2] = lerp(P[k + 2], sp[2], wgt);
+          dashPoint(dotSide[n], dotQ[n] + travel, k, sp);
+          let tx = sp[0], ty = sp[1], tz = sp[2];
+          if (settle > 0.001) {
+            const tC = DASH_CS + ((th.streamT[n] + time * DASH_SPEED) % 1) * (1 - DASH_CS);
+            dashPoint(dotSide[n], tC, k, sp);
+            tx = lerp(tx, sp[0], settle);
+            ty = lerp(ty, sp[1], settle);
+            tz = lerp(tz, sp[2], settle);
+          }
+          P[k] = lerp(P[k], tx, engage);
+          P[k + 1] = lerp(P[k + 1], ty, engage);
+          P[k + 2] = lerp(P[k + 2], tz, engage);
         }
       }
     }
@@ -1419,4 +1596,5 @@ if (reduced) {
   window.__tilliStep = step;
   window.__tilliThree = () => three;
   window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
+  window.__tilliPaths = () => ({ paths: DASH_PATHS, text: pathsText() });
 }
