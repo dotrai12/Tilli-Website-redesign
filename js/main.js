@@ -194,18 +194,26 @@ function spreadHero(pos) {
    live-tunable from the GUI panel (buildGUI); the network reseeds from a
    fixed seed each rebuild, so a given set of values is deterministic. */
 const HERO_CFG = {
-  autoWire: true,   // generated network on, plus the hand-wired BAKED_LINKS below
-  count: 12,        // field dots on the main rim
-  linksPerNode: 2,  // forward neighbours each rim node can thread to (auto only)
-  skip: 0.35,       // 0..0.9 — chance a candidate thread is dropped (auto only)
-  spacing: 0.35,    // 0 = perfectly even round the rim, 1 = quite uneven
-  branches: 4,      // leaf dots that hang off the chain (auto only)
-  thickness: 0.050, // half-width of a thread, in world units
-  opacity: 0.45,    // master multiplier on thread opacity
-  ringScale: 1.32,  // tightens / widens the rim
+  count: 17,        // evenly-spaced rim dots seeded as the default connected set
+  linksPerNode: 2,  // how many forward neighbours each dot links to (1 = simple ring)
+  spacing: 0,       // 0 = perfectly even round the rim (clean garland)
+  branches: 12,     // leaf dots that hang just outside the rim, one line each
+  thickness: 0.055, // half-width of a connection line, in world units
+  opacity: 0.35,    // master multiplier on connection-line opacity
+  ringScale: 0.86,  // tightens / widens the rim
   color: '#2E3542',
 };
 const HERO_TOP = Math.PI / 2; // rim starts at the top of the frame
+/* the ring-connection lines only join dots whose angular separation is at
+   most this (radians). A short rim chord hugs the ellipse; anything wider
+   would cut across the empty middle where the text sits, so it's dropped. */
+const MEASURE_MAXGAP = 2.0;   // ~115° — safely clear of the centre
+/* the connection ring is STITCHED on only AFTER the burst transition has
+   settled the dots into the ring: over this heroP window the lines grow from
+   the TOP, anti-clockwise, and close back on the first dot. It finishes
+   before MORPH_AT (where the flow starts carrying the ring off). */
+const STITCH_START = 0.56;    // heroP where the ring starts drawing (post-burst)
+const STITCH_END = 0.64;      // heroP where the ring has fully closed
 
 /* ── Hero orb + hand ───────────────────────────────────────────────
    The landing beat is now a spherical cluster of dots cradled in a
@@ -216,7 +224,7 @@ const SPHERE_Z = -3;             // world plane the orb sits on (same as the rin
 const HAND_Z = -3;               // world plane the hand planes sit on (with the orb)
 const SPHERE = {
   radius: 4.6,        // orb radius in world units
-  burstSpeed: 2.6,    // how fast the orb bursts as you scroll beat B
+  burstSpeed: 4.2,    // how fast the orb bursts — settles into the ring before the flow leaves
   spin: 0.22,         // idle rotation speed of the parked orb
 };
 const BURST_START = 0.30;        // heroP where the burst begins (beat B lead-in)
@@ -277,12 +285,6 @@ function relayoutHero() {
   if (handAPI) handAPI.update();
 }
 
-/* Hand-wired links baked from the GUI's Edit mode (pairs of field indices).
-   They compose on top of the generated network and load by default; the
-   layout is deterministic (rng seed + the config above), so these land on
-   the exact dots they were drawn on. */
-const BAKED_LINKS = [[0, 367], [367, 59], [167, 247], [265, 281], [33, 125], [125, 367]];
-
 /* build the whole network for the current config. Links are stored as
    pairs of *field* indices, so drawLinks can read endpoints straight from
    the live dot field. Node/branch angles are stored so layoutHeroRing can
@@ -291,10 +293,12 @@ let heroNet = buildHeroNetwork(HERO_CFG);
 function buildHeroNetwork(cfg) {
   const r = rng(7);
   const count = Math.max(2, Math.round(cfg.count));
-  const step = (Math.PI * 2) / count;
 
-  /* evenly spaced field dots become the rim nodes; their angle is the even
-     position off the top, nudged by up to ±half a step for `spacing` */
+  /* Rim nodes are laid evenly around the FULL circle (starting at the top),
+     so the connection ring can close all the way round back to the first
+     dot. The bottom now carries dots too (see layoutHeroRing's bottom fill),
+     so a node there is no longer stranded in an empty gap. */
+  const step = (Math.PI * 2) / count;
   const nodeIdx = new Int32Array(count);
   const nodeAng = new Float32Array(count);
   for (let k = 0; k < count; k++) {
@@ -302,54 +306,26 @@ function buildHeroNetwork(cfg) {
     nodeAng[k] = HERO_TOP + k * step + (r() - 0.5) * step * cfg.spacing;
   }
 
-  const links = [];
+  /* leaf dots: a distinct field dot hung just outside a rim node, joined to
+     it by a single line — a branch off the ring. `branchLinks` are host→leaf
+     field-index pairs, drawn on top of the garland. */
   const branchIdx = [];
   const branchAng = [];
-
-  /* With auto-wiring OFF the ring is just a clean set of pickable dots —
-     no threads, no leaves — so the wiring can be drawn entirely by hand in
-     Edit mode. Everything below only runs when auto-wiring is on. */
-  if (cfg.autoWire) {
-    /* open chain round the rim (k → k+1), plus longer chords up to
-       linksPerNode. The +1 chain is the backbone but the odd one is dropped
-       to leave a gap; the longer chords are dropped at the `skip` rate. The
-       ring is left open (no k=last → 0 wrap) so it never closes into a
-       perfect polygon. */
-    const deg = new Int32Array(count);
-    const add = (ka, kb) => { links.push([nodeIdx[ka], nodeIdx[kb]]); deg[ka]++; deg[kb]++; };
-    const maxD = Math.max(1, Math.round(cfg.linksPerNode));
-    for (let k = 0; k < count; k++) {
-      for (let d = 1; d <= maxD; d++) {
-        const j = k + d;
-        if (j >= count) continue;               // open chain — no wraparound
-        const p = d === 1 ? cfg.skip * 0.35 : cfg.skip; // keep most of the backbone
-        if (r() < p) continue;
-        add(k, j);
-      }
-    }
-    /* guarantee no rim node is fully stranded: link any orphan to its
-       neighbour so the chain still reads as one network */
-    for (let k = 0; k < count; k++) {
-      if (deg[k] === 0) add(k, k === count - 1 ? k - 1 : k + 1);
-    }
-
-    /* leaf dots: a distinct field dot hung just outside a rim node, wired
-       to it once — a single thread branching off the main connection */
-    const used = new Set();
-    for (let k = 0; k < count; k++) used.add(nodeIdx[k]);
-    const nb = Math.max(0, Math.round(cfg.branches));
-    for (let b = 0; b < nb; b++) {
-      const host = Math.floor(r() * count);
-      let li = 0, guard = 0;
-      do { li = Math.floor(r() * N); guard++; } while (used.has(li) && guard < 60);
-      used.add(li);
-      branchIdx.push(li);
-      branchAng.push({ ang: nodeAng[host] + (r() - 0.5) * 0.5, rad: 1.2 + r() * 0.28 });
-      links.push([nodeIdx[host], li]);
-    }
+  const branchLinks = [];
+  const used = new Set();
+  for (let k = 0; k < count; k++) used.add(nodeIdx[k]);
+  const nb = Math.max(0, Math.round(cfg.branches));
+  for (let b = 0; b < nb; b++) {
+    const host = Math.floor(r() * count);
+    let li = 0, guard = 0;
+    do { li = Math.floor(r() * N); guard++; } while (used.has(li) && guard < 60);
+    used.add(li);
+    branchIdx.push(li);
+    branchAng.push({ ang: nodeAng[host] + (r() - 0.5) * 0.5, rad: 1.22 + r() * 0.3 });
+    branchLinks.push([nodeIdx[host], li]);
   }
 
-  return { count, nodeIdx, nodeAng, links, branchIdx, branchAng };
+  return { count, nodeIdx, nodeAng, branchIdx, branchAng, branchLinks };
 }
 
 /* place the network's dots: rim nodes stay EXACTLY on the ellipse (so the
@@ -391,6 +367,7 @@ function layoutHeroRing(ring) {
     dashJit[i * 3] = dashJit[i * 3 + 1] = dashJit[i * 3 + 2] = 0;
   }
   const p = [0, 0, 0];
+  const span = Math.PI - ARC_CUT;
   for (let i = 0; i < N; i++) {
     if (special[i]) continue;
     const jit = r(), jx = r(), jy = r(), jz = r();
@@ -399,12 +376,27 @@ function layoutHeroRing(ring) {
     dashJit[i * 3] = (jx - 0.5) * 3.2;
     dashJit[i * 3 + 1] = (jy - 0.5) * 2.4;
     dashJit[i * 3 + 2] = (jz - 0.5) * 2;
-    /* parked exactly where its queue slot sits on the path (wide band) —
-       so "start flowing" is just this same point with a larger t */
-    dashPoint(dotSide[i], dotQ[i], i * 3, p);
-    ring[i * 3] = p[0];
-    ring[i * 3 + 1] = p[1];
-    ring[i * 3 + 2] = p[2];
+    /* Is this dot in the bottom wedge the two flow arcs don't cover? (Its
+       queue slot would clamp past the arc end.) If so, PARK IT DIRECTLY on
+       the full ellipse so the ring's dot band closes across the bottom and
+       bleeds off the bottom edge — mirroring the top — instead of piling up
+       at the arc ends. It rejoins its queue when the flow leaves. */
+    let a = ang % (2 * Math.PI);
+    if (a < 0) a += 2 * Math.PI;
+    if (a >= 3 * Math.PI / 2) a -= 2 * Math.PI;   // → [-π/2, 3π/2)
+    const ratio = a > Math.PI / 2 ? (a - Math.PI / 2) / span : (Math.PI / 2 - a) / span;
+    if (ratio > 1) {
+      ring[i * 3] = Math.cos(ang) * rx + dashJit[i * 3] * RING_JIT;
+      ring[i * 3 + 1] = Math.sin(ang) * ry + dashJit[i * 3 + 1] * RING_JIT;
+      ring[i * 3 + 2] = RING_Z + dashJit[i * 3 + 2] * RING_JIT;
+    } else {
+      /* parked exactly where its queue slot sits on the path (wide band) —
+         so "start flowing" is just this same point with a larger t */
+      dashPoint(dotSide[i], dotQ[i], i * 3, p);
+      ring[i * 3] = p[0];
+      ring[i * 3 + 1] = p[1];
+      ring[i * 3 + 2] = p[2];
+    }
   }
 }
 
@@ -540,7 +532,8 @@ function buildFormations() {
   const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
 
   /* 0 · HERO — dots packed into a spherical cluster cradled in the hand.
-       Beat B bursts them into `heroSpread` (a full-viewport scatter). */
+       Beat B bursts them into the ring (see layoutHeroRing / the step() burst
+       block). `heroSpread` is kept as a spare full-viewport scatter. */
   const hero = make();
   {
     sphereHero(hero.pos);
@@ -821,13 +814,15 @@ function initThree() {
      animated growing out from one dot towards the next. The endpoints are
      read live from the dot field itself — these ARE the scene's dots
      connecting, not a separate overlay of anchor dots. */
-  /* `linkDraw` = the procedural network PLUS any hand-wired manual links.
-     Manual links survive a procedural rebuild (they live in their own
-     array), so the GUI's "Edit wiring" mode composes on top of the
-     generated web. Both are pairs of field indices. */
-  let manualLinks = BAKED_LINKS.map((l) => [l[0], l[1]]);
-  let linkDraw = heroNet.links.concat(manualLinks);
-  let linkPos = new Float32Array(Math.max(linkDraw.length, 1) * 6 * 3);
+  /* `selection` = the field-index set of ring dots that are wired together
+     (the "connected dots"). Seeded with the evenly-spaced rim nodes so the
+     ring loads with a clean garland; the GUI's picker adds/removes dots
+     live. `linkDraw` is rebuilt from the selection by chainLinks() — always
+     joining angle-adjacent dots only, so no line ever crosses the middle. */
+  const selection = Array.from(heroNet.nodeIdx);
+  const defaultSelection = () => Array.from(heroNet.nodeIdx);
+  let linkDraw = [];
+  let linkPos = new Float32Array(Math.max(selection.length, 1) * 6 * 3);
   const linkGeo = new THREE.BufferGeometry();
   linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
   linkGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
@@ -895,8 +890,51 @@ function initThree() {
   };
   hands.update();
 
+  /* Turn the current selection into rim-hugging connection lines, then add
+     the branch offshoots. The dots are ordered around the ring with the
+     SEAM at the bottom (so the chain runs bottom-right → up and over →
+     bottom-left and is left OPEN at the bottom, where the dots thin out).
+     Each dot links forward to up to `linksPerNode` neighbours — 1 gives a
+     simple outline, more gives a denser web — and any join wider than
+     MEASURE_MAXGAP is dropped, so no line ever cuts across the empty middle
+     where the text sits. */
+  function chainLinks() {
+    const ring = built.heroRing;
+    /* order the dots starting at the TOP (angle 0) and going ANTI-CLOCKWISE
+       (increasing world angle), so the stitch grows from the top around the
+       ring; the closed loop then brings it back to the first (top) dot */
+    const ord = (i) => {
+      let a = Math.atan2(ring[i * 3 + 1], ring[i * 3]) - Math.PI / 2;
+      if (a < 0) a += Math.PI * 2;
+      return a;
+    };
+    const nodes = selection
+      .filter((i) => i >= 0 && i < N)
+      .map((i) => ({ i, o: ord(i) }))
+      .sort((p, q) => p.o - q.o);
+    const out = [];
+    const n = nodes.length;
+    const span = Math.max(1, Math.round(HERO_CFG.linksPerNode));
+    /* closed loop — each dot links forward to up to `span` neighbours, and
+       the last dots wrap back to the first, so the ring reaches its start.
+       Pushed in node order (top → anti-clockwise) so drawLinks stitches it on
+       in that order. Any join wider than MEASURE_MAXGAP is dropped. */
+    for (let s = 0; s < n; s++) {
+      for (let d = 1; d <= span; d++) {
+        if (d >= n) break;
+        const j = (s + d) % n;
+        let gap = nodes[j].o - nodes[s].o;
+        if (gap < 0) gap += Math.PI * 2;
+        if (gap <= MEASURE_MAXGAP) out.push([nodes[s].i, nodes[j].i]);
+      }
+    }
+    /* branch offshoots ride on top, drawn to leaf dots outside the rim */
+    for (const bl of heroNet.branchLinks) out.push([bl[0], bl[1]]);
+    return out;
+  }
+
   function refreshLinkDraw() {
-    linkDraw = heroNet.links.concat(manualLinks);
+    linkDraw = chainLinks();
     const need = Math.max(linkDraw.length, 1) * 18;
     if (linkPos.length < need) {
       linkPos = new Float32Array(need);
@@ -904,14 +942,16 @@ function initThree() {
     }
   }
 
-  /* regenerate the procedural network when the GUI changes a structural
-     value; manual links are preserved and re-composed on top */
+  /* re-lay the ring after a structural change (e.g. ring size); the picked
+     selection survives — the dots just move, and chainLinks re-reads their
+     new angles — so the wiring stays put. */
   function rebuildHeroNetwork() {
     heroNet = buildHeroNetwork(HERO_CFG);
     layoutHeroRing(built.heroRing);
     links.material.color.set(HERO_CFG.color);
     refreshLinkDraw();
   }
+  refreshLinkDraw();
 
   /* ── Manual wiring: pick dots in the scene, then connect them ──────
      A bright overlay marks the current selection; edit mode shows a
@@ -920,7 +960,6 @@ function initThree() {
   raycaster.params.Points.threshold = 1.0;
   const EDIT_VIEW_SCALE = 0.62; // ring shrink while editing, so no dot is occluded
   let editMode = false;
-  const selection = [];
   const contentEl = document.querySelector('.content');
 
   const selPos = new Float32Array(N * 3);
@@ -961,6 +1000,9 @@ function initThree() {
     const idx = best.index;
     const at = selection.indexOf(idx);
     if (at >= 0) selection.splice(at, 1); else selection.push(idx);
+    /* the selection IS the wiring now — reconnect live so the ring updates
+       the moment a dot is toggled */
+    refreshLinkDraw();
   }
   /* the .content HTML sits above the canvas (z 2 > 1) and its steps take
      inline pointer-events:auto from the scroll choreography, so they'd
@@ -981,15 +1023,11 @@ function initThree() {
     else selMat.opacity = 0;
   }
   const isEditing = () => editMode;
-  function connectSelected() {
-    for (let s = 1; s < selection.length; s++) manualLinks.push([selection[s - 1], selection[s]]);
-    selection.length = 0;
-    refreshLinkDraw();
-  }
-  const clearSelection = () => { selection.length = 0; };
-  const clearManual = () => { manualLinks.length = 0; refreshLinkDraw(); };
-  const selectionInfo = () => ({ count: selection.length, ids: selection.slice(), manual: manualLinks.length });
-  const wiringText = () => '[' + manualLinks.map((l) => `[${l[0]},${l[1]}]`).join(',') + ']';
+  /* clear every connection; reset back to the evenly-spaced default garland */
+  const clearSelection = () => { selection.length = 0; refreshLinkDraw(); };
+  const resetSelection = () => { selection.length = 0; defaultSelection().forEach((i) => selection.push(i)); refreshLinkDraw(); };
+  const selectionInfo = () => ({ count: selection.length, links: linkDraw.length });
+  const wiringText = () => '[' + selection.join(',') + ']';
 
   /* edit mode: hold the ring dead-still, fully wired, and render the
      selection overlay — everything else in step() is skipped */
@@ -1060,9 +1098,9 @@ function initThree() {
 
   return {
     renderer, scene3, camera, geo, P, CL, phases, ...built,
-    links, drawLinks, rebuildHeroNetwork,
-    isEditing, stepEdit, setEditMode, connectSelected, clearSelection, clearManual,
-    selectionInfo, wiringText, getManual: () => manualLinks.map((l) => [l[0], l[1]]),
+    links, drawLinks, rebuildHeroNetwork, restitch: refreshLinkDraw,
+    isEditing, stepEdit, setEditMode, clearSelection, resetSelection,
+    selectionInfo, wiringText, getManual: () => selection.slice(),
     hands,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
@@ -1478,14 +1516,18 @@ function buildGUI(th) {
     return b;
   };
 
-  /* The hero orb + hand settings are baked into the config now, so the GUI
-     only carries the still-tunable Dashboard flow controls. */
   const sectionTitle = (txt) => {
     const t = document.createElement('div');
     t.textContent = txt;
     t.style.cssText = 'font-weight:700;letter-spacing:0.02em;margin-top:2px;';
     body.appendChild(t);
   };
+
+  /* The ring-connection settings (line colour/thickness/opacity, ring size,
+     connections-per-dot, branches, and the dot selection) are all baked into
+     HERO_CFG now, so their GUI controls have been removed. To retune, edit
+     HERO_CFG directly. The picker machinery (th.setEditMode / stepEdit) is
+     still available from the console if you need to re-pick dots. */
 
   /* ── Space between the two sections ─────────────────────────────────
      Sizes the dedicated CROSS screen between "They measure…" and "Schools
@@ -1608,6 +1650,7 @@ if (reduced) {
        the dots arrive together with the incoming text */
     const si = S.i;
     let i = si, tt = S.wt;
+    let heroBurst = 0;   // 1 once the orb has fully burst into the ring (beat B)
     if (i > th.F.length - 2) { i = th.F.length - 2; tt = 1; }
     /* 1 while scene `idx` owns the screen, easing to 0 across each handover */
     const hold = (idx) => (si === idx ? 1 - S.wt : si === idx - 1 ? S.wt : 0);
@@ -1623,11 +1666,16 @@ if (reduced) {
     }
 
     /* HERO: the orb holds through beat A (with a slow idle spin), then beat B
-       bursts it — every dot flies from the ball out to its scatter slot. */
+       bursts it — every dot flies from the ball out and settles into the RING
+       that wraps around the "They measure…" text. Bursting straight into the
+       ring (not a loose scatter) means the same dots are already parked as the
+       head of the dashboard flow, so the hand-over downstream stays seamless. */
     if (i === 0) {
       const burst = ease(clamp((th.heroP - BURST_START) * SPHERE.burstSpeed));
+      heroBurst = burst;
       if (handAPI) handAPI.frame(planeZ, burst);
       const bc = ballWorld();
+      const ring = th.heroRing;
       if (burst < 1 && SPHERE.spin > 0.001) {
         const ang = time * SPHERE.spin * (1 - burst);
         for (let k = 0; k < N * 3; k += 3) rotate2D(P, k, bc[0], bc[2], ang);
@@ -1635,9 +1683,9 @@ if (reduced) {
       if (burst > 0) {
         const wgt = burst * (1 - tt);
         for (let k = 0; k < N * 3; k += 3) {
-          P[k] += (heroSpread[k] - A.pos[k]) * wgt;
-          P[k + 1] += (heroSpread[k + 1] - A.pos[k + 1]) * wgt;
-          P[k + 2] += (heroSpread[k + 2] - A.pos[k + 2]) * wgt;
+          P[k] += (ring[k] - A.pos[k]) * wgt;
+          P[k + 1] += (ring[k + 1] - A.pos[k + 1]) * wgt;
+          P[k + 2] += (ring[k + 2] - A.pos[k + 2]) * wgt;
         }
       }
       /* atmospheric depth: dots on the far side of the ball wash toward the
@@ -1664,12 +1712,8 @@ if (reduced) {
        world layer, so it has to be gone by SCROLL_AT — it would otherwise
        hang in the middle of the frame while the hero text scrolls away
        underneath it. */
-    /* fade the web out across the morph lead-in → scroll hand-over, so it's
-       gone by the time the flow gets going (tracks the dynamic gap) */
-    /* hero threads retired — the landing beat is now the orb + hand, so the
-       connection web no longer draws (the network layout is still kept for
-       the dashboard flow queues below). */
-    th.links.material.opacity = 0;
+    /* the connection lines are drawn at the end of the frame, once P is
+       final — their opacity envelope is computed there from heroBurst. */
 
     /* FLOW: the ring is the head of two queues. One continuous progress φ
        carries the field across THREE scenes — leave the ring in the Start
@@ -1762,9 +1806,23 @@ if (reduced) {
     th.geo.attributes.position.needsUpdate = true;
     th.geo.attributes.color.needsUpdate = true;
 
-    /* hero threads retired (see above) — the orb + hand carry the landing
-       beat now, so the connection web stays hidden. */
-    th.links.material.opacity = 0;
+    /* RING CONNECTIONS: once the burst has fully settled the dots into the
+       ring, STITCH the connection lines on — `stitch` drives drawLinks' growth
+       progress, so the lines grow from the TOP, anti-clockwise, and close back
+       on the first dot. The ring then holds and fades as the flow carries it
+       off. Drawn here — after the breathing pass — so the line quads land
+       exactly on the rendered dots. `heroBurst` gates it to a fully-formed
+       ring (beat B, transition complete). */
+    {
+      const stitch = smooth(clamp((th.heroP - STITCH_START) / (STITCH_END - STITCH_START)));
+      const leave = 1 - smooth(clamp((th.heroP - MORPH_AT) / 0.05));
+      if (i === 0 && heroBurst > 0.999 && stitch > 0.001 && leave > 0.01) {
+        th.links.material.opacity = HERO_CFG.opacity * leave;
+        th.drawLinks(stitch, P);
+      } else {
+        th.links.material.opacity = 0;
+      }
+    }
 
     th.renderer.render(th.scene3, th.camera);
   }
