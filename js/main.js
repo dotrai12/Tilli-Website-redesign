@@ -226,10 +226,16 @@ const ORB = { x: 0.50, y: 0.38 };
    the orb (image-1 layout). Each is placed by its centre (x,y screen frac),
    sized by `scale` (image width as a fraction of the viewport width), and
    can be mirrored on either axis. Baked from the GUI. */
+/* per hand: `rotY` = persistent resting Y-turn (deg); `burstRotY` = extra
+   Y-turn applied per-hand as the orb bursts (deg, scaled by burst). Baked. */
 const HANDS = {
-  left:  { x: 0.24, y: 0.23, scale: 0.30, flipX: true,  flipY: true },
-  right: { x: 0.75, y: 0.23, scale: 0.30, flipX: false, flipY: true },
+  left:  { x: 0.24, y: 0.23, scale: 0.30, flipX: true,  flipY: true,  rotY: 0, burstRotY: -55 },
+  right: { x: 0.75, y: 0.23, scale: 0.30, flipX: false, flipY: true,  rotY: 0, burstRotY: 55 },
 };
+/* how the hands recoil as the orb bursts: `move` = world units each hand
+   travels away from the orb; `rotX/rotZ` = shared degrees on those axes as
+   it pulls back (Y is per-hand, see HANDS.*.burstRotY). Baked. */
+const HAND_BURST = { move: 7, rotX: 0, rotZ: 0 };
 
 /* map a screen fraction (0..1, top-left origin) to a world point on plane z */
 function screenFracToWorld(fx, fy, z) {
@@ -851,16 +857,41 @@ function initThree() {
     return m;
   };
   const handMeshes = { left: mkHand(), right: mkHand() };
-  function placeHand(m, cfg) {
+  /* base (resting) world position of each hand, cached by update() so the
+     per-frame burst offset can be applied on top without recomputing it */
+  const handBase = { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
+  function placeHand(m, cfg, base) {
     const [wx, wy] = screenFracToWorld(cfg.x, cfg.y, HAND_Z);
     const w = cfg.scale * 2 * visHalf(HAND_Z).w;   // world width from viewport-fraction scale
+    base.x = wx; base.y = wy;
     m.position.set(wx, wy, HAND_Z);
     m.scale.set(w * (cfg.flipX ? -1 : 1), w * HAND_ASPECT * (cfg.flipY ? -1 : 1), 1);
   }
   const hands = {
     meshes: handMeshes,
-    update() { placeHand(handMeshes.left, HANDS.left); placeHand(handMeshes.right, HANDS.right); },
-    setReveal(t) { const o = clamp(t); handMeshes.left.material.opacity = o; handMeshes.right.material.opacity = o; },
+    update() { placeHand(handMeshes.left, HANDS.left, handBase.left); placeHand(handMeshes.right, HANDS.right, handBase.right); },
+    /* per-frame: pin to the camera plane, and on burst push each hand away
+       from the orb (radially) + tilt it back on its X axis, while fading */
+    frame(planeZ, burst) {
+      const orb = ballWorld();
+      const mv = HAND_BURST.move * burst;
+      const DEG = Math.PI / 180;
+      const bd = DEG * burst;                 // burst-scaled degrees → radians
+      const rx = HAND_BURST.rotX * bd, rz = HAND_BURST.rotZ * bd;
+      for (const key of ['left', 'right']) {
+        const cfg = HANDS[key];
+        const m = handMeshes[key], b = handBase[key];
+        let dx = b.x - orb[0], dy = b.y - orb[1];
+        const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+        m.position.set(b.x + dx * mv, b.y + dy * mv, HAND_Z + planeZ);
+        /* Y = this hand's resting turn (persistent) + its own burst turn */
+        const ry = (cfg.rotY || 0) * DEG + (cfg.burstRotY || 0) * bd;
+        m.rotation.set(rx, ry, rz);
+        /* stay opaque through the early swing-out, then fade over the back
+           half of the burst so the recoil actually reads before disappearing */
+        m.material.opacity = clamp((1 - burst) / 0.55);
+      }
+    },
   };
   hands.update();
 
@@ -1447,51 +1478,18 @@ function buildGUI(th) {
     return b;
   };
 
-  /* ── Space between the two sections ─────────────────────────────────
-     Sizes the dedicated CROSS screen between "They measure…" and "Schools
-     see…" — the scroll length the dots have to cross paths in. */
-  /* ── Hero orb & hand ────────────────────────────────────────────────
-     The landing beat: a spherical dot cluster cradled in the line-drawn
-     hand, which bursts as you scroll into "They measure…". */
+  /* The hero orb + hand settings are baked into the config now, so the GUI
+     only carries the still-tunable Dashboard flow controls. */
   const sectionTitle = (txt) => {
     const t = document.createElement('div');
     t.textContent = txt;
     t.style.cssText = 'font-weight:700;letter-spacing:0.02em;margin-top:2px;';
     body.appendChild(t);
   };
-  const checkRow = (label, get, set) => {
-    const r = document.createElement('label');
-    r.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;';
-    const name = document.createElement('span'); name.textContent = label;
-    const inp = document.createElement('input');
-    inp.type = 'checkbox'; inp.checked = !!get();
-    inp.style.cssText = 'width:16px;height:16px;accent-color:#E91E8C;cursor:pointer;';
-    inp.addEventListener('change', () => set(inp.checked));
-    r.append(name, inp);
-    body.appendChild(r);
-  };
 
-  sectionTitle('Hero orb');
-  row('Orb position X', () => ORB.x, (v) => { ORB.x = v; relayoutHero(); }, 0.1, 0.9, 0.01);
-  row('Orb position Y', () => ORB.y, (v) => { ORB.y = v; relayoutHero(); }, 0.15, 0.85, 0.01);
-  row('Orb size', () => SPHERE.radius, (v) => { SPHERE.radius = v; relayoutHero(); }, 2, 9, 0.1);
-  row('Burst speed', () => SPHERE.burstSpeed, (v) => { SPHERE.burstSpeed = v; }, 0.5, 6, 0.1);
-
-  const handSection = (title, cfg) => {
-    sectionTitle(title);
-    row('Position X', () => cfg.x, (v) => { cfg.x = v; handAPI.update(); }, 0, 1, 0.01);
-    row('Position Y', () => cfg.y, (v) => { cfg.y = v; handAPI.update(); }, 0, 1, 0.01);
-    row('Size', () => cfg.scale, (v) => { cfg.scale = v; handAPI.update(); }, 0.1, 0.9, 0.01);
-    checkRow('Flip X', () => cfg.flipX, (v) => { cfg.flipX = v; handAPI.update(); });
-    checkRow('Flip Y', () => cfg.flipY, (v) => { cfg.flipY = v; handAPI.update(); });
-  };
-  handSection('Left hand', HANDS.left);
-  handSection('Right hand', HANDS.right);
-
-  const rule1 = document.createElement('div');
-  rule1.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
-  body.appendChild(rule1);
-
+  /* ── Space between the two sections ─────────────────────────────────
+     Sizes the dedicated CROSS screen between "They measure…" and "Schools
+     see…" — the scroll length the dots have to cross paths in. */
   sectionTitle('Dashboard flow');
   row('Space between sections', () => CROSS_VH, (v) => setCrossVH(v), 60, 400, 10);
 
@@ -1605,13 +1603,6 @@ if (reduced) {
     th.camera.lookAt(mx.x * 0.4 * orbit, -mx.y * 0.25 * orbit, th.camZ - 30);
     const planeZ = th.camZ - CAM_DIST;
 
-    /* the hand planes ride the same camera-pinned plane as the dot field, so
-       they stay cradling the orb through beat A and recede with it */
-    if (th.hands) {
-      th.hands.meshes.left.position.z = HAND_Z + planeZ;
-      th.hands.meshes.right.position.z = HAND_Z + planeZ;
-    }
-
     /* base morph — the field holds a formation through the body of a
        scene (S.wt === 0) and morphs to the next one over its tail, so
        the dots arrive together with the incoming text */
@@ -1635,7 +1626,7 @@ if (reduced) {
        bursts it — every dot flies from the ball out to its scatter slot. */
     if (i === 0) {
       const burst = ease(clamp((th.heroP - BURST_START) * SPHERE.burstSpeed));
-      if (handAPI) handAPI.setReveal(1 - burst);
+      if (handAPI) handAPI.frame(planeZ, burst);
       const bc = ballWorld();
       if (burst < 1 && SPHERE.spin > 0.001) {
         const ang = time * SPHERE.spin * (1 - burst);
@@ -1665,7 +1656,7 @@ if (reduced) {
         }
       }
     } else if (handAPI) {
-      handAPI.setReveal(0);
+      handAPI.frame(planeZ, 1);
     }
     /* the threads are drawn between the field's own dots once the ring has
        settled — the actual layout happens below, after idle breathing, so
