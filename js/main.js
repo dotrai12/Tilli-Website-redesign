@@ -207,6 +207,70 @@ const HERO_CFG = {
 };
 const HERO_TOP = Math.PI / 2; // rim starts at the top of the frame
 
+/* ── Hero orb + hand ───────────────────────────────────────────────
+   The landing beat is now a spherical cluster of dots cradled in a
+   line-drawn hand. On scroll into "They measure…" the orb bursts and
+   the dots spread across the frame (then flow on into the dashboard).
+   Everything below is live-tunable from the GUI. */
+const SPHERE_Z = -3;             // world plane the orb sits on (same as the ring)
+const HAND_Z = -3;               // world plane the hand planes sit on (with the orb)
+const SPHERE = {
+  radius: 4.6,        // orb radius in world units
+  burstSpeed: 2.6,    // how fast the orb bursts as you scroll beat B
+  spin: 0.22,         // idle rotation speed of the parked orb
+};
+const BURST_START = 0.30;        // heroP where the burst begins (beat B lead-in)
+/* orb centre, screen fraction (0..1, top-left origin) — baked from the GUI */
+const ORB = { x: 0.50, y: 0.38 };
+/* the two Milo-Hand images that sweep in from the top corners and cradle
+   the orb (image-1 layout). Each is placed by its centre (x,y screen frac),
+   sized by `scale` (image width as a fraction of the viewport width), and
+   can be mirrored on either axis. Baked from the GUI. */
+const HANDS = {
+  left:  { x: 0.24, y: 0.23, scale: 0.30, flipX: true,  flipY: true },
+  right: { x: 0.75, y: 0.23, scale: 0.30, flipX: false, flipY: true },
+};
+
+/* map a screen fraction (0..1, top-left origin) to a world point on plane z */
+function screenFracToWorld(fx, fy, z) {
+  const v = visHalf(z);
+  return [(fx - 0.5) * 2 * v.w, -(fy - 0.5) * 2 * v.h, z];
+}
+function ballWorld() { return screenFracToWorld(ORB.x, ORB.y, SPHERE_Z); }
+
+/* the burst target — a full-viewport scatter the orb explodes into */
+const heroSpread = new Float32Array(N * 3);
+
+/* 0 · HERO orb — dots packed into a PERFECT filled ball at the hand cup.
+   (No z stretch: a spheroid rotates into a wide egg as the orb spins. The
+   3D read now comes from real perspective size-attenuation + depth-buffer
+   occlusion + the atmospheric wash below.) */
+const ORB_DEPTH = 1.0;               // keep 1.0 — a true sphere at every angle
+function sphereHero(pos) {
+  const r = rng(21);
+  const c = ballWorld();
+  const R = SPHERE.radius;
+  for (let i = 0; i < N; i++) {
+    const rr = R * Math.cbrt(r());     // uniform in volume
+    const u = 2 * r() - 1;             // cos(theta)
+    const phi = 2 * Math.PI * r();
+    const s = Math.sqrt(Math.max(0, 1 - u * u));
+    pos[i * 3] = c[0] + rr * s * Math.cos(phi);
+    pos[i * 3 + 1] = c[1] + rr * s * Math.sin(phi);
+    pos[i * 3 + 2] = c[2] + rr * u * ORB_DEPTH;
+  }
+}
+
+/* refill the two hero layouts (orb + burst scatter) — run at build, on
+   resize, and whenever a GUI control moves the orb/hand */
+let handAPI = null;
+function relayoutHero() {
+  if (!three) return;
+  sphereHero(three.F[0].pos);
+  spreadHero(heroSpread);
+  if (handAPI) handAPI.update();
+}
+
 /* Hand-wired links baked from the GUI's Edit mode (pairs of field indices).
    They compose on top of the generated network and load by default; the
    layout is deterministic (rng seed + the config above), so these land on
@@ -469,10 +533,12 @@ function buildFormations() {
   const setP = (f, i, x, y, z) => { f.pos[i * 3] = x; f.pos[i * 3 + 1] = y; f.pos[i * 3 + 2] = z; };
   const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
 
-  /* 0 · HERO — dots scattered everywhere around the question */
+  /* 0 · HERO — dots packed into a spherical cluster cradled in the hand.
+       Beat B bursts them into `heroSpread` (a full-viewport scatter). */
   const hero = make();
   {
-    spreadHero(hero.pos);
+    sphereHero(hero.pos);
+    spreadHero(heroSpread);
     for (let i = 0; i < N; i++) setC(hero, i, MIX[i % 5]);
     F.push(hero);
   }
@@ -735,7 +801,11 @@ function initThree() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(CL, 3));
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.2, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
+  /* depthWrite + alphaTest so a near dot properly occludes the dots behind
+     it — without this the field draws in buffer order and far dots paint
+     over near ones (the orb looked inside-out). The sprite is a near-solid
+     disc, so alphaTest clips only the feathered rim and edges stay clean. */
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.2, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: true, depthTest: true, alphaTest: 0.5 }));
   pts.frustumCulled = false;
   scene3.add(pts);
 
@@ -761,6 +831,38 @@ function initThree() {
   links.frustumCulled = false;
   links.renderOrder = 1;
   scene3.add(links);
+
+  /* ── Hero hands: the two Milo-Hand images live IN the 3D scene now, as
+     textured planes on the orb's plane, so they parallax with the camera
+     and recede with the fly-through instead of floating as a flat overlay.
+     Rendered behind the dots (renderOrder −1) so the orb reads in front;
+     depthTest off so draw order, not the z-buffer, decides layering. */
+  const handTex = new THREE.TextureLoader().load('assets/Milo Hand.png');
+  handTex.colorSpace = THREE.SRGBColorSpace;
+  const HAND_ASPECT = 963 / 1412;
+  const mkHand = () => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: handTex, transparent: true, opacity: 1, depthWrite: false, depthTest: false, side: THREE.DoubleSide }),
+    );
+    m.renderOrder = -1;
+    m.frustumCulled = false;
+    scene3.add(m);
+    return m;
+  };
+  const handMeshes = { left: mkHand(), right: mkHand() };
+  function placeHand(m, cfg) {
+    const [wx, wy] = screenFracToWorld(cfg.x, cfg.y, HAND_Z);
+    const w = cfg.scale * 2 * visHalf(HAND_Z).w;   // world width from viewport-fraction scale
+    m.position.set(wx, wy, HAND_Z);
+    m.scale.set(w * (cfg.flipX ? -1 : 1), w * HAND_ASPECT * (cfg.flipY ? -1 : 1), 1);
+  }
+  const hands = {
+    meshes: handMeshes,
+    update() { placeHand(handMeshes.left, HANDS.left); placeHand(handMeshes.right, HANDS.right); },
+    setReveal(t) { const o = clamp(t); handMeshes.left.material.opacity = o; handMeshes.right.material.opacity = o; },
+  };
+  hands.update();
 
   function refreshLinkDraw() {
     linkDraw = heroNet.links.concat(manualLinks);
@@ -916,7 +1018,9 @@ function initThree() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    spreadHero(built.F[0].pos);
+    sphereHero(built.F[0].pos);
+    spreadHero(heroSpread);
+    hands.update();
     layoutHeroRing(built.heroRing);
     /* layoutHeroRing re-lays the paths too (they're fraction-based, so the
        world polylines must track the viewport aspect) */
@@ -928,6 +1032,7 @@ function initThree() {
     links, drawLinks, rebuildHeroNetwork,
     isEditing, stepEdit, setEditMode, connectSelected, clearSelection, clearManual,
     selectionInfo, wiringText, getManual: () => manualLinks.map((l) => [l[0], l[1]]),
+    hands,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -1278,6 +1383,15 @@ function buildPathEditor(th) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   HERO HANDS — two Milo-Hand images that sweep in from the top corners
+   and cradle the dot orb (the image-1 layout). Each hand is positioned by
+   its centre, sized by `scale`, and can be mirrored on either axis — all
+   live-tunable from the GUI (see initThree → `hands`). They fade out as the
+   orb bursts. The hand meshes themselves are created inside initThree so
+   they can be added straight into scene3.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════
    GUI — live controls for the hero connection network. Vanilla DOM so it
    stays self-contained (no extra module to vendor). Collapsible; toggle
    with the ⚙ button or the `g` key.
@@ -1297,7 +1411,7 @@ function buildGUI(th) {
 
   const head = document.createElement('div');
   head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer;font-weight:700;letter-spacing:0.02em;';
-  head.innerHTML = '<span>Dashboard flow</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
+  head.innerHTML = '<span>Landing controls</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
   wrap.appendChild(head);
 
   const body = document.createElement('div');
@@ -1336,6 +1450,49 @@ function buildGUI(th) {
   /* ── Space between the two sections ─────────────────────────────────
      Sizes the dedicated CROSS screen between "They measure…" and "Schools
      see…" — the scroll length the dots have to cross paths in. */
+  /* ── Hero orb & hand ────────────────────────────────────────────────
+     The landing beat: a spherical dot cluster cradled in the line-drawn
+     hand, which bursts as you scroll into "They measure…". */
+  const sectionTitle = (txt) => {
+    const t = document.createElement('div');
+    t.textContent = txt;
+    t.style.cssText = 'font-weight:700;letter-spacing:0.02em;margin-top:2px;';
+    body.appendChild(t);
+  };
+  const checkRow = (label, get, set) => {
+    const r = document.createElement('label');
+    r.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;';
+    const name = document.createElement('span'); name.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'checkbox'; inp.checked = !!get();
+    inp.style.cssText = 'width:16px;height:16px;accent-color:#E91E8C;cursor:pointer;';
+    inp.addEventListener('change', () => set(inp.checked));
+    r.append(name, inp);
+    body.appendChild(r);
+  };
+
+  sectionTitle('Hero orb');
+  row('Orb position X', () => ORB.x, (v) => { ORB.x = v; relayoutHero(); }, 0.1, 0.9, 0.01);
+  row('Orb position Y', () => ORB.y, (v) => { ORB.y = v; relayoutHero(); }, 0.15, 0.85, 0.01);
+  row('Orb size', () => SPHERE.radius, (v) => { SPHERE.radius = v; relayoutHero(); }, 2, 9, 0.1);
+  row('Burst speed', () => SPHERE.burstSpeed, (v) => { SPHERE.burstSpeed = v; }, 0.5, 6, 0.1);
+
+  const handSection = (title, cfg) => {
+    sectionTitle(title);
+    row('Position X', () => cfg.x, (v) => { cfg.x = v; handAPI.update(); }, 0, 1, 0.01);
+    row('Position Y', () => cfg.y, (v) => { cfg.y = v; handAPI.update(); }, 0, 1, 0.01);
+    row('Size', () => cfg.scale, (v) => { cfg.scale = v; handAPI.update(); }, 0.1, 0.9, 0.01);
+    checkRow('Flip X', () => cfg.flipX, (v) => { cfg.flipX = v; handAPI.update(); });
+    checkRow('Flip Y', () => cfg.flipY, (v) => { cfg.flipY = v; handAPI.update(); });
+  };
+  handSection('Left hand', HANDS.left);
+  handSection('Right hand', HANDS.right);
+
+  const rule1 = document.createElement('div');
+  rule1.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
+  body.appendChild(rule1);
+
+  sectionTitle('Dashboard flow');
   row('Space between sections', () => CROSS_VH, (v) => setCrossVH(v), 60, 400, 10);
 
   const gapHint = document.createElement('div');
@@ -1395,6 +1552,8 @@ if (reduced) {
   onScroll();
 } else {
   three = initThree();
+  handAPI = three.hands;
+  relayoutHero();
   buildGUI(three);
   let f = 0;
   let lastT = performance.now();
@@ -1439,9 +1598,19 @@ if (reduced) {
     const mx = th.mouse;
     mx.x = lerp(mx.x, mx.tx, 1 - Math.exp(-dt * 3));
     mx.y = lerp(mx.y, mx.ty, 1 - Math.exp(-dt * 3));
-    th.camera.position.set(mx.x * 1.1, -mx.y * 0.7 + Math.sin(time * 0.3) * 0.15, th.camZ);
-    th.camera.lookAt(mx.x * 0.4, -mx.y * 0.25, th.camZ - 30);
+    /* the soft orbit (mouse parallax + slow drift) is OFF on the landing so
+       the orb sits dead still, and eases back in once we leave the hero */
+    const orbit = smooth(clamp((f - 0.9) / 0.5));
+    th.camera.position.set(mx.x * 1.1 * orbit, (-mx.y * 0.7 + Math.sin(time * 0.3) * 0.15) * orbit, th.camZ);
+    th.camera.lookAt(mx.x * 0.4 * orbit, -mx.y * 0.25 * orbit, th.camZ - 30);
     const planeZ = th.camZ - CAM_DIST;
+
+    /* the hand planes ride the same camera-pinned plane as the dot field, so
+       they stay cradling the orb through beat A and recede with it */
+    if (th.hands) {
+      th.hands.meshes.left.position.z = HAND_Z + planeZ;
+      th.hands.meshes.right.position.z = HAND_Z + planeZ;
+    }
 
     /* base morph — the field holds a formation through the body of a
        scene (S.wt === 0) and morphs to the next one over its tail, so
@@ -1462,15 +1631,41 @@ if (reduced) {
       CL[k + 2] = lerp(A.col[k + 2], B.col[k + 2], tt);
     }
 
-    /* HERO: beat B pulls the scattered dots into the connected ring */
-    const heroBeat = ease(clamp((th.heroP - 0.28) / 0.24));
-    if (i === 0 && heroBeat > 0) {
-      const wgt = heroBeat * (1 - tt);
-      for (let k = 0; k < N * 3; k += 3) {
-        P[k] += (th.heroRing[k] - A.pos[k]) * wgt;
-        P[k + 1] += (th.heroRing[k + 1] - A.pos[k + 1]) * wgt;
-        P[k + 2] += (th.heroRing[k + 2] - A.pos[k + 2]) * wgt;
+    /* HERO: the orb holds through beat A (with a slow idle spin), then beat B
+       bursts it — every dot flies from the ball out to its scatter slot. */
+    if (i === 0) {
+      const burst = ease(clamp((th.heroP - BURST_START) * SPHERE.burstSpeed));
+      if (handAPI) handAPI.setReveal(1 - burst);
+      const bc = ballWorld();
+      if (burst < 1 && SPHERE.spin > 0.001) {
+        const ang = time * SPHERE.spin * (1 - burst);
+        for (let k = 0; k < N * 3; k += 3) rotate2D(P, k, bc[0], bc[2], ang);
       }
+      if (burst > 0) {
+        const wgt = burst * (1 - tt);
+        for (let k = 0; k < N * 3; k += 3) {
+          P[k] += (heroSpread[k] - A.pos[k]) * wgt;
+          P[k + 1] += (heroSpread[k + 1] - A.pos[k + 1]) * wgt;
+          P[k + 2] += (heroSpread[k + 2] - A.pos[k + 2]) * wgt;
+        }
+      }
+      /* atmospheric depth: dots on the far side of the ball wash toward the
+         white background so the sphere reads with volume. Fades out with the
+         burst (a flat scatter needs no depth cue). */
+      const shade = 1 - burst;
+      if (shade > 0.01) {
+        const zBack = bc[2] - SPHERE.radius * ORB_DEPTH;
+        const span = 2 * SPHERE.radius * ORB_DEPTH || 1;
+        for (let k = 0; k < N * 3; k += 3) {
+          const depth = clamp((P[k + 2] - zBack) / span);   // 0 far, 1 near
+          const wash = (1 - depth) * (1 - depth) * shade * 0.8;
+          CL[k] = lerp(CL[k], 1, wash);
+          CL[k + 1] = lerp(CL[k + 1], 1, wash);
+          CL[k + 2] = lerp(CL[k + 2], 1, wash);
+        }
+      }
+    } else if (handAPI) {
+      handAPI.setReveal(0);
     }
     /* the threads are drawn between the field's own dots once the ring has
        settled — the actual layout happens below, after idle breathing, so
@@ -1480,9 +1675,10 @@ if (reduced) {
        underneath it. */
     /* fade the web out across the morph lead-in → scroll hand-over, so it's
        gone by the time the flow gets going (tracks the dynamic gap) */
-    const webStart = MORPH_AT - 0.04;
-    const heroOut = clamp(1 - (f - webStart) / (SCROLL_AT - webStart));
-    th.links.material.opacity = heroOut * HERO_CFG.opacity;
+    /* hero threads retired — the landing beat is now the orb + hand, so the
+       connection web no longer draws (the network layout is still kept for
+       the dashboard flow queues below). */
+    th.links.material.opacity = 0;
 
     /* FLOW: the ring is the head of two queues. One continuous progress φ
        carries the field across THREE scenes — leave the ring in the Start
@@ -1575,15 +1771,9 @@ if (reduced) {
     th.geo.attributes.position.needsUpdate = true;
     th.geo.attributes.color.needsUpdate = true;
 
-    /* hero threads: connect the field's own dots, using the final live
-       positions above (P already carries the plane offset + breathing, so
-       the mesh stays at z = 0). Only alive while the hero owns the screen. */
-    if (i === 0 && heroOut > 0) {
-      th.links.position.z = 0;
-      th.drawLinks(clamp((th.heroP - 0.44) / 0.20), P);
-    } else {
-      th.links.material.opacity = 0;
-    }
+    /* hero threads retired (see above) — the orb + hand carry the landing
+       beat now, so the connection web stays hidden. */
+    th.links.material.opacity = 0;
 
     th.renderer.render(th.scene3, th.camera);
   }
