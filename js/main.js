@@ -572,6 +572,30 @@ const funPh = new Float32Array(N);  // phase offset along the fall, [0, 1)
 const funZ = new Float32Array(N);   // depth
 (() => { const r = rng(71); for (let i = 0; i < N; i++) { funH[i] = r() - 0.5; funPh[i] = r(); funZ[i] = -4 - r() * 3; } })();
 
+/* COLLECT SPLIT flow — after the Reports cards settle, the field divides into a
+   left half and a right half, each sweeping OUT from the side of the report
+   images, arcing down and around, then merging into the spiral (the Collect
+   scene). Filled from the spiral formation as it's built. spiralPos = each dot's
+   spiral target; collectSide = which side it exits from (−1 left / +1 right,
+   by its target's x); collectFrac = a stable stagger so the dots string out
+   along the arc as a continuous ribbon rather than all moving in lockstep. */
+const spiralPos = new Float32Array(N * 3);
+const collectSide = new Int8Array(N);
+const collectFrac = new Float32Array(N);
+(() => { const r = rng(214); for (let i = 0; i < N; i++) collectFrac[i] = r(); })();
+
+/* COLLECT SPLIT arc control points, as SCREEN FRACTIONS (0..1, top-left
+   origin) — editable live via the GUI "Edit collect arcs" toggle. Each side is
+   a cubic Bézier: A (start beside the cards) → C1 (out to the screen side) →
+   C2 (down low) → the spiral centre. `red` = the left stream, `blue` = the
+   right stream. The COLLECT SPLIT step block maps these to world points with
+   screenFracToWorld each frame, so dragging a handle reshapes the arc live. To
+   bake an edited layout, copy the editor's textarea over COLLECT_ARC. */
+const COLLECT_ARC = {
+  red:  [[0.31, 0.28], [0.07, 0.43], [0.19, 0.87]],
+  blue: [[0.69, 0.28], [0.93, 0.43], [0.81, 0.87]],
+};
+
 function buildFormations() {
   const tmp = new THREE.Color();
   const white = new THREE.Color('#ffffff');
@@ -664,31 +688,21 @@ function buildFormations() {
   layoutFunnelScene();
   F.push(funnelForm);
 
-  /* 3 · REPORTS — the funnel resolves into "Teachers share…": most dots hold
-       the funnel while a quarter peel off into a heart at right ("loved by
-       parents"). Same FUNNEL_CFG so it lines up with the Funnel screen;
-       layoutReportsFunnel is returned so the GUI rebuilds it live too. */
+  /* 3 · REPORTS — the funnel resolves into "Teachers share…": all dots hold
+       the funnel and keep pouring into the report card. Same FUNNEL_CFG so it
+       lines up with the Funnel screen; layoutReportsFunnel is returned so the
+       GUI rebuilds it live too. */
   const fan = make();
   const layoutReportsFunnel = () => {
     const r = rng(33);
-    for (let i = 0; i < N; i++) {
-      if (i % 4 === 3) { // the heart — "loved by parents"
-        const t = (i / N) * Math.PI * 2 * 4.1;
-        const s = 0.17 * (0.82 + r() * 0.3);
-        setP(fan, i,
-          10.5 + 16 * Math.pow(Math.sin(t), 3) * s,
-          -2.5 + (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * s,
-          -3 - r() * 2);
-        setC(fan, i, i % 8 === 3 ? C.pink : C.pink2, 0.05);
-      } else { // the funnel, carried over from the Funnel screen
-        funnelDot(fan, i, r);
-      }
-    }
+    for (let i = 0; i < N; i++) funnelDot(fan, i, r);
   };
   layoutReportsFunnel();
   F.push(fan);
 
-  /* 3 · COLLECT — the data spirals into one rotating circle */
+  /* 3 · COLLECT — the data spirals into one rotating circle. The pink dots
+     (i%5===4) are already faded to white here: as the split streams merge into
+     the spiral they slowly disappear, so the settled spiral carries no pink. */
   {
     const sp = make();
     const r = rng(44);
@@ -696,8 +710,13 @@ function buildFormations() {
       const t = i / N;
       const ang = t * Math.PI * 7 + r() * 0.35;
       const rad = 1.2 + t * 9.6 + (r() - 0.5) * 0.9;
-      setP(sp, i, Math.cos(ang) * rad * 1.15, Math.sin(ang) * rad * 0.92, -3 - r() * 3);
-      setC(sp, i, MIX[i % 5]);
+      const x = Math.cos(ang) * rad * 1.15, y = Math.sin(ang) * rad * 0.92, z = -3 - r() * 3;
+      setP(sp, i, x, y, z);
+      const pink = i % 5 === 4;
+      if (pink) { sp.col[i * 3] = 1; sp.col[i * 3 + 1] = 1; sp.col[i * 3 + 2] = 1; }
+      else setC(sp, i, MIX[i % 5]);
+      spiralPos[i * 3] = x; spiralPos[i * 3 + 1] = y; spiralPos[i * 3 + 2] = z;
+      collectSide[i] = x < 0 ? -1 : 1;
     }
     F.push(sp);
   }
@@ -1301,7 +1320,12 @@ function onScroll() {
   const fCrossCentre = crossI + 0.35;               // f where the two streams cross
   const heroGone = smooth(clamp((f - (fCrossCentre - 0.18)) / 0.24));
   const liftDots = f > MORPH_AT + 0.02 && f < fCrossCentre + 0.12;
-  if (worldEl) worldEl.style.zIndex = liftDots ? '3' : '1';
+  /* COLLECT SPLIT: once the arcs have emerged from beside the cards, lift the
+     dot field IN FRONT of the report cards so the streams flow from behind the
+     cards to the front as the cards disappear and the dots cluster in the
+     middle. Dropped back to 1 before the next scene's content arrives. */
+  const liftCollect = f > ST['Reports'] + 0.80 && f < ST['Collect'] + 0.45;
+  if (worldEl) worldEl.style.zIndex = (liftDots || liftCollect) ? '3' : '1';
 
   /* NORMAL SCROLL around the Funnel screen — the one stretch that breaks the
      seamless cross-fade. "Schools see…" physically translates UP and out as
@@ -1408,8 +1432,8 @@ function runPin(sc, p) {
   }
   if (sc.pin === 'fan' && T.fans[0]) {
     const q = ease(clamp(p / 0.6));
-    T.fans[0].style.transform = `rotate(${-7 * q}deg) translateX(${290 - 266 * q}px)`;
-    T.fans[2].style.transform = `rotate(${7 * q}deg) translateX(${-(290 - 266 * q)}px)`;
+    T.fans[0].style.transform = `rotate(${-7 * q}deg) translateX(${377 - 346 * q}px)`;
+    T.fans[2].style.transform = `rotate(${7 * q}deg) translateX(${-(377 - 346 * q)}px)`;
     T.fans[1].style.transform = `scale(${0.96 + 0.04 * q})`;
     return;
   }
@@ -1569,6 +1593,98 @@ function buildPathEditor(th) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   COLLECT-ARC EDITOR — draggable control points for the two split arcs
+   (red = left stream, blue = right stream) that carry the field out of the
+   report cards and into the spiral. Each side is a cubic A→C1→C2→spiral;
+   the three shaping points A/C1/C2 are editable (screen fractions), the end
+   is anchored at the spiral centre. Dragging rewrites COLLECT_ARC and the
+   dots follow live — scroll into the Reports→Collect hand-over to watch.
+   ═══════════════════════════════════════════════════════════════════ */
+function collectArcsText() {
+  const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
+  return `red:  ${f(COLLECT_ARC.red)},\nblue: ${f(COLLECT_ARC.blue)},`;
+}
+function buildCollectArcEditor() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const COLORS = { red: '#E4322B', blue: '#2E6BE6' };
+  const W = () => window.innerWidth, H = () => window.innerHeight;
+  const END = [0.5, 0.5];   // the spiral centre (world 0,0), where both arcs land
+
+  /* z-index 61 sits ABOVE the GUI panel (60): the root svg is pointer-events
+     none so panel clicks still pass through, but the draggable handle circles
+     (pointer-events auto) stay on top and grabbable even where the arc's
+     right-side points fall behind the top-right panel */
+  const svg = document.createElementNS(NS, 'svg');
+  svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:61;pointer-events:none;display:none;';
+  document.body.appendChild(svg);
+
+  const curve = {}, endDot = {}, handles = { red: [], blue: [] };
+  for (const key of ['red', 'blue']) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', COLORS[key]);
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('opacity', '0.92');
+    svg.appendChild(path);
+    curve[key] = path;
+    const e = document.createElementNS(NS, 'circle');
+    e.setAttribute('r', '6'); e.setAttribute('fill', COLORS[key]); e.setAttribute('opacity', '0.5');
+    svg.appendChild(e);
+    endDot[key] = e;
+  }
+
+  let active = null, onChange = null;
+  function redraw() {
+    const w = W(), h = H();
+    for (const key of ['red', 'blue']) {
+      const p = COLLECT_ARC[key];
+      const px = (i) => p[i][0] * w, py = (i) => p[i][1] * h;
+      curve[key].setAttribute('d',
+        `M${px(0).toFixed(1)} ${py(0).toFixed(1)} C${px(1).toFixed(1)} ${py(1).toFixed(1)} ${px(2).toFixed(1)} ${py(2).toFixed(1)} ${(END[0] * w).toFixed(1)} ${(END[1] * h).toFixed(1)}`);
+      endDot[key].setAttribute('cx', END[0] * w); endDot[key].setAttribute('cy', END[1] * h);
+      handles[key].forEach((c, idx) => {
+        c.setAttribute('cx', p[idx][0] * w); c.setAttribute('cy', p[idx][1] * h);
+        c.setAttribute('fill', idx === 0 ? COLORS[key] : '#fff');   // filled = the start anchor
+      });
+    }
+  }
+
+  for (const key of ['red', 'blue']) {
+    handles[key] = COLLECT_ARC[key].map((_, idx) => {
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('r', '9');
+      c.setAttribute('stroke', COLORS[key]);
+      c.setAttribute('stroke-width', '3');
+      c.style.cssText = 'pointer-events:auto;cursor:grab;';
+      c.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); active = { key, idx };
+        c.style.cursor = 'grabbing'; c.setPointerCapture(e.pointerId);
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!active || active.key !== key || active.idx !== idx) return;
+        COLLECT_ARC[key][idx] = [clamp(e.clientX / W()), clamp(e.clientY / H())];
+        redraw(); if (onChange) onChange();
+      });
+      c.addEventListener('pointerup', (e) => {
+        active = null; c.style.cursor = 'grab';
+        try { c.releasePointerCapture(e.pointerId); } catch (_) { /* fine */ }
+      });
+      svg.appendChild(c);
+      return c;
+    });
+  }
+
+  window.addEventListener('resize', () => { if (svg.style.display !== 'none') redraw(); });
+  redraw();
+
+  return {
+    show(v) { svg.style.display = v ? 'block' : 'none'; if (v) redraw(); },
+    setOnChange(fn) { onChange = fn; },
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    HERO HANDS — two Milo-Hand images that sweep in from the top corners
    and cradle the dot orb (the image-1 layout). Each hand is positioned by
    its centre, sized by `scale`, and can be mirrored on either axis — all
@@ -1684,6 +1800,38 @@ function buildGUI(th) {
     pathHint.style.display = editingPaths ? 'block' : 'none';
     pathOut.style.display = editingPaths ? 'block' : 'none';
     pathOut.value = pathsText();
+  });
+
+  /* ── Editable collect-split arcs ────────────────────────────────────
+     Draggable red/blue control points for the two arcs that carry the
+     field out of the report cards and into the spiral. */
+  const arcEd = buildCollectArcEditor();
+  const arcBtn = mkBtn('✏️ Edit collect arcs: OFF');
+  arcBtn.style.width = '100%';
+  body.appendChild(arcBtn);
+
+  const arcHint = document.createElement('div');
+  arcHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
+  arcHint.textContent = 'Drag the red (left) / blue (right) dots to reshape the split arcs. Scroll into the Reports→Collect hand-over to watch the dots follow.';
+  arcHint.style.display = 'none';
+  body.appendChild(arcHint);
+
+  const arcOut = document.createElement('textarea');
+  arcOut.readOnly = true; arcOut.rows = 3;
+  arcOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;display:none;';
+  arcOut.value = collectArcsText();
+  body.appendChild(arcOut);
+  arcEd.setOnChange(() => { arcOut.value = collectArcsText(); });
+
+  let editingArcs = false;
+  arcBtn.addEventListener('click', () => {
+    editingArcs = !editingArcs;
+    arcEd.show(editingArcs);
+    arcBtn.textContent = editingArcs ? '✏️ Edit collect arcs: ON' : '✏️ Edit collect arcs: OFF';
+    arcBtn.style.background = editingArcs ? '#FCC30B' : '#fff';
+    arcHint.style.display = editingArcs ? 'block' : 'none';
+    arcOut.style.display = editingArcs ? 'block' : 'none';
+    arcOut.value = collectArcsText();
   });
 
   let open = true;
@@ -1937,13 +2085,13 @@ if (reduced) {
     /* FUNNEL WATERFALL: across the Funnel screen and the Reports funnel, the
        funnel dots continuously fall from the mouth (top) to the spout (bottom);
        a dot that reaches the bottom vanishes (fades to the wash) and re-appears
-       at the top — so it reads as a stream pouring down. On Reports the heart
-       dots (n%4===3) peel off and stop falling as the heart blooms. */
+       at the top — so it reads as a stream pouring down. */
     {
       const fI = ST['Funnel'], rI = ST['Reports'];
-      const funW = smooth(clamp((f - (fI - 0.1)) / 0.25)) * (1 - smooth(clamp((f - (rI + 0.85)) / 0.15)));
+      /* the pour releases right as the COLLECT SPLIT takes over (rI+0.55…0.67),
+         so the two side-streams peel straight out of the settled pour */
+      const funW = smooth(clamp((f - (fI - 0.1)) / 0.25)) * (1 - smooth(clamp((f - (rI + 0.55)) / 0.12)));
       if (funW > 0.001) {
-        const heartForm = smooth(clamp((f - (fI + 0.6)) / 0.5));   // heart blooms into Reports
         const MOUTH = FUNNEL_CFG.y, XC = FUNNEL_CFG.x;
         /* the spout ends on the report card's TOP EDGE, tracked live as the
            card slides up (repIn: 0 = a viewport below, 1 = at rest — same
@@ -1953,7 +2101,6 @@ if (reduced) {
         const SPOUT = REPORT_CARD_TOP_Y - (1 - S.repIn) * VIEWPORT_WORLD_H;
         for (let n = 0; n < N; n++) {
           let w = funW;
-          if (n % 4 === 3) w *= 1 - heartForm;   // heart dots settle, stop falling
           if (w < 0.001) continue;
           const k = n * 3;
           const tt = (funPh[n] + time * FUNNEL_CFG.fallSpeed) % 1;   // 0 = mouth, 1 = spout
@@ -1969,6 +2116,74 @@ if (reduced) {
             CL[k] = lerp(CL[k], 1, fade);
             CL[k + 1] = lerp(CL[k + 1], 1, fade);
             CL[k + 2] = lerp(CL[k + 2], 1, fade);
+          }
+        }
+      }
+    }
+
+    /* COLLECT SPLIT: after the report cards settle the field divides down the
+       middle. Each half is EMITTED as a queue from beside the report images and
+       flows along a big cubic arc — out to the screen side, down low, then up —
+       so the two streams visibly TRACE the path (a red arc on the left, a blue
+       arc on the right) as they come out from BEHIND the cards. They then
+       CLUSTER into a tight clump in the centre of the screen (lifted in FRONT
+       of the cards — see the collect z-lift in onScroll) just as the cards fade
+       away, and finally that clump UNFURLS into the rotating spiral. Dots are
+       strung along the arc by an emit stagger + fixed travel time so it reads
+       as two flowing ribbons. Pink dots fade to white on the way. The endpoint
+       rides the live spinning spiral so it releases into the Collect rotation
+       with no jump. */
+    {
+      const rI = ST['Reports'], cI = ST['Collect'];
+      const gStart = rI + 0.55, gEnd = cI + 0.40;
+      if (f >= gStart && f <= gEnd) {
+        const eng = smooth(clamp((f - gStart) / 0.10));
+        const Pg = clamp((f - gStart) / (gEnd - gStart));   // 0..1 across the whole split
+        const EMIT = 0.25, DUR = 0.40;                      // stagger span · per-dot travel time
+        /* the arriving dots gather into a tight central clump (radius = CLUMP ×
+           the spiral) while the cards disappear, then UNFURL to the full spiral
+           over the back of the split. clump z pulls to CLUMP_Z so it reads as
+           one blob in the middle, not a deep column. openP=1 (Pg→1) ⇒ scale 1,
+           so the endpoint lands exactly on the native spiral (no release jump). */
+        const CLUMP = 0.16, CLUMP_Z = -4.5;
+        const openP = smooth(clamp((Pg - 0.66) / 0.34));
+        const sc = CLUMP + (1 - CLUMP) * openP;
+        const spinW = si === rI ? S.wt : 1;                 // matches the Collect rotation spin-up
+        const A = time * 0.45 * spinW, cs = Math.cos(A), sn = Math.sin(A);
+        /* the two arcs' control points, mapped from their editable screen
+           fractions to world once per frame (see COLLECT_ARC / the editor) */
+        const AZ = -3, CA = COLLECT_ARC;
+        const rA = screenFracToWorld(CA.red[0][0], CA.red[0][1], AZ);
+        const rC1 = screenFracToWorld(CA.red[1][0], CA.red[1][1], AZ);
+        const rC2 = screenFracToWorld(CA.red[2][0], CA.red[2][1], AZ);
+        const bA = screenFracToWorld(CA.blue[0][0], CA.blue[0][1], AZ);
+        const bC1 = screenFracToWorld(CA.blue[1][0], CA.blue[1][1], AZ);
+        const bC2 = screenFracToWorld(CA.blue[2][0], CA.blue[2][1], AZ);
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          const s = smooth(clamp((Pg - collectFrac[n] * EMIT) / DUR));   // 0 at cards → 1 in spiral
+          const side = collectSide[n], left = side < 0;   // left half → red arc, right → blue
+          /* endpoint: this dot's spiral target, rotated onto the live spiral and
+             pulled toward the centre by `sc` — tight clump first, full spiral by
+             the end */
+          const sx0 = spiralPos[k], sy0 = spiralPos[k + 1];
+          const ex = (sx0 * cs - sy0 * sn) * sc, ey = (sy0 * cs + sx0 * sn) * sc, ez = lerp(CLUMP_Z, spiralPos[k + 2], sc);
+          /* cubic arc: beside the cards → out to the side → down low → up into
+             the spiral from the lower outside (control points are editable) */
+          const pA = left ? rA : bA, pC1 = left ? rC1 : bC1, pC2 = left ? rC2 : bC2;
+          const ax = pA[0] + funH[n] * 2.4, ay = pA[1] + (funPh[n] - 0.5) * 3, az = AZ;
+          const c1x = pC1[0], c1y = pC1[1], c1z = AZ;
+          const c2x = pC2[0], c2y = pC2[1], c2z = AZ;
+          const o = 1 - s, o2 = o * o, o3 = o2 * o, s2 = s * s, s3 = s2 * s;
+          const w0 = o3, w1 = 3 * o2 * s, w2 = 3 * o * s2, w3 = s3;
+          P[k] = lerp(P[k], w0 * ax + w1 * c1x + w2 * c2x + w3 * ex, eng);
+          P[k + 1] = lerp(P[k + 1], w0 * ay + w1 * c1y + w2 * c2y + w3 * ey, eng);
+          P[k + 2] = lerp(P[k + 2], w0 * az + w1 * c1z + w2 * c2z + w3 * ez, eng);
+          if (n % 5 === 4) {   // the pink dots slowly disappear as the spiral forms
+            const pf = smooth(clamp((Pg - 0.15) / 0.6)) * eng;
+            CL[k] = lerp(CL[k], 1, pf);
+            CL[k + 1] = lerp(CL[k + 1], 1, pf);
+            CL[k + 2] = lerp(CL[k + 2], 1, pf);
           }
         }
       }
@@ -2013,5 +2228,6 @@ if (reduced) {
   window.__tilliThree = () => three;
   window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
   window.__tilliPaths = () => ({ paths: DASH_PATHS, text: pathsText() });
+  window.__tilliCollectArcs = () => ({ arcs: COLLECT_ARC, text: collectArcsText() });
   window.__tilliDrain = () => drainAmt;
 }
