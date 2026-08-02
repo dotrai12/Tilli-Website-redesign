@@ -155,6 +155,28 @@ const DEPTH = 40;
 const CAM_DIST = 26;
 const N = 400;
 
+/* ON-TRACK "kids" formation — the dots trace the Student Outline figure(s).
+   count    number of children in the row
+   gap      spacing between adjacent children (world units, centre-to-centre)
+   x,y,z    position of the whole GROUP of kids (world units)
+   height   world height of each figure (its width follows the SVG aspect)
+   dot      dot size for the kids only (independent of every other scene)
+   colors   palette cycled around each child's outline (give it 3, 4, … colours) */
+const KID = {
+  count: 6,
+  gap: 9.5,
+  x: 0, y: 2.5, z: -3,
+  height: 11,
+  dot: 1.2,
+  colors: [C.green, C.yellow, C.cyan],
+};
+/* x-centre of child k, laid out symmetrically around the group's x */
+const kidCenterX = (k) => KID.x + (k - (KID.count - 1) / 2) * KID.gap;
+
+/* ON-TRACK headline/subtext block offset (moves the whole .wrap together).
+   x,y = screen translation in px; z = depth as a scale multiplier (1 = default). */
+const STATE_TEXT = { x: 0, y: 315, z: 1.1 };
+
 let three = null;
 
 function dotTexture() {
@@ -822,19 +844,16 @@ function buildFormations() {
   rebuildDNA2();
   F.push(dna2);
 
-  /* 7 · ON TRACK — the dots arrange themselves into children */
+  /* 7 · ON TRACK — the dots fill the Student Outline child silhouette.
+     loadStudentSilhouette() patches this buffer once the SVG loads; the
+     blob below is only a fallback shape shown if that fetch ever fails. */
   {
     const kids = make();
-    const r = rng(77);
-    const centers = [-9.5, 0, 9.5];
-    const KIDMIX = [C.green, C.cyan, C.yellow];
     for (let i = 0; i < N; i++) {
-      const k = i % 3;
-      const t = r() * Math.PI * 2;
-      // five-limbed star-child: head, two arms, two legs
-      const rad = 4.6 * (0.68 + 0.32 * Math.cos(5 * (t + Math.PI / 2))) + (r() - 0.5) * 0.5;
-      setP(kids, i, centers[k] + Math.cos(t) * rad * 0.95, Math.sin(t) * rad - 1.2, -3 - r() * 2);
-      setC(kids, i, KIDMIX[(i + k) % 3], 0.06);
+      const k = i % KID.count, m = (i - k) / KID.count, M = Math.ceil((N - k) / KID.count);
+      const t = (m / M) * Math.PI * 2, rad = 4.2;   // clean ring outline
+      setP(kids, i, kidCenterX(k) + Math.cos(t) * rad, KID.y + Math.sin(t) * rad, KID.z);
+      setC(kids, i, KID.colors[m % KID.colors.length], 0.06);
     }
     F.push(kids);
   }
@@ -901,6 +920,72 @@ function buildFormations() {
   return { F, heroRing, dnaThresh, streamT, relayoutDash, layoutReportsFunnel, layoutFunnelScene, rebuildDNA2 };
 }
 
+/* The ON-TRACK formation is filled from the OUTLINE of assets/Student Outline.svg.
+   loadStudentSilhouette() fetches + measures the path ONCE and caches it in
+   kidLayout (keeping a hidden <svg> alive so the outline can be re-walked). All
+   the KID controls then re-lay the figures synchronously via relayoutKids() — no
+   re-fetch per change. Swap the figure by replacing the SVG (single closed path). */
+let kidLayout = null;   // { pathEl, L, viewBox+matrix params, form } once loaded
+
+function relayoutKids() {
+  if (!kidLayout) return;
+  const { pathEl, L, vx, vy, vw, vh, a, b, c, dd, e, ff, form } = kidLayout;
+  const KID_W = KID.height * (vw / vh);   // width follows the SVG aspect
+  const pal = KID.colors.length ? KID.colors : ['#ffffff'];
+  const white = new THREE.Color('#ffffff');
+  const tmp = new THREE.Color();
+
+  // split the field across KID.count kids; walk each evenly around the outline
+  for (let k = 0; k < KID.count; k++) {
+    const idxs = [];
+    for (let i = k; i < N; i += KID.count) idxs.push(i);
+    const M = idxs.length, cx = kidCenterX(k);
+    for (let m = 0; m < M; m++) {
+      const p = pathEl.getPointAtLength((m / M) * L);
+      const x = a * p.x + c * p.y + e;   // bake the group transform
+      const y = b * p.x + dd * p.y + ff;
+      const nx = (x - vx) / vw - 0.5;    // -0.5..0.5 across the figure
+      const ny = (y - vy) / vh - 0.5;    // SVG y runs downward
+      const i = idxs[m];
+      form.pos[i * 3]     = cx + nx * KID_W;
+      form.pos[i * 3 + 1] = KID.y - ny * KID.height;   // flip to world-up
+      form.pos[i * 3 + 2] = KID.z;
+      tmp.set(pal[m % pal.length]).lerp(white, 0.06);   // cycle the palette
+      form.col[i * 3]     = tmp.r;
+      form.col[i * 3 + 1] = tmp.g;
+      form.col[i * 3 + 2] = tmp.b;
+    }
+  }
+}
+
+function loadStudentSilhouette(form) {
+  fetch('assets/Student Outline.svg')
+    .then(res => res.text())
+    .then(svg => {
+      const d = (svg.match(/<path[^>]*\sd="([^"]+)"/i) || [])[1];
+      const vbm = svg.match(/viewBox="([^"]+)"/i);
+      if (!d || !vbm) return;
+      const [vx, vy, vw, vh] = vbm[1].split(/[\s,]+/).map(Number);
+      const mm = svg.match(/matrix\(([^)]+)\)/);
+      const [a, b, c, dd, e, ff] = mm ? mm[1].split(/[\s,]+/).map(Number)
+                                      : [1, 0, 0, 1, 0, 0];
+
+      // keep a hidden <svg> alive so getPointAtLength can re-walk the outline
+      const NS = 'http://www.w3.org/2000/svg';
+      const holder = document.createElementNS(NS, 'svg');
+      holder.setAttribute('width', '0'); holder.setAttribute('height', '0');
+      holder.style.cssText = 'position:absolute;left:-9999px;top:-9999px';
+      const pathEl = document.createElementNS(NS, 'path');
+      pathEl.setAttribute('d', d);
+      holder.appendChild(pathEl);
+      document.body.appendChild(holder);
+
+      kidLayout = { pathEl, L: pathEl.getTotalLength(), vx, vy, vw, vh, a, b, c, dd, e, ff, form };
+      relayoutKids();
+    })
+    .catch(() => {});
+}
+
 function initThree() {
   const canvas = document.getElementById('world');
   let renderer;
@@ -941,6 +1026,7 @@ function initThree() {
 
   /* the storytelling field */
   const built = buildFormations();
+  loadStudentSilhouette(built.F[9]);   // upgrade the ON-TRACK blob to the SVG kid
   const P = new Float32Array(N * 3); P.set(built.F[0].pos);
   const CL = new Float32Array(N * 3); CL.set(built.F[0].col);
   const phases = new Float32Array(N * 3);
@@ -1348,7 +1434,7 @@ function pinTargets(sc) {
     zoom: q('[data-zoom]'),
     fans: [q('[data-fan="1"]'), q('[data-fan="2"]'), q('[data-fan="3"]')],
     aiCard: q('[data-ai-card]'), aiAns: q('[data-ai-ans]'), aiFoot: q('[data-ai-foot]'),
-    stH: q('[data-st-h]'), stP: q('[data-st-p]'), pops: qa('[data-pop]'),
+    stH: q('[data-st-h]'), stP: q('[data-st-p]'), pops: qa('[data-pop]'), stWrap: q('.wrap'),
     skillCards: qa('.skill-card'),
     vH: q('[data-v-h]'), vLabels: qa('.view-label'),
     stageTitles: qa('.stage-title'), stagePanels: qa('.stage-panel'),
@@ -1551,6 +1637,7 @@ function runPin(sc, p) {
   }
   if (sc.pin === 'state' && T.stH) {
     const q = ease(clamp(p / 0.35));
+    if (T.stWrap) T.stWrap.style.transform = `translate(${STATE_TEXT.x}px, ${STATE_TEXT.y}px) scale(${STATE_TEXT.z})`;
     T.stH.style.transform = `scale(${0.9 + 0.1 * q})`;
     T.stH.style.opacity = String(0.15 + 0.85 * q);
     T.stP.style.opacity = String(clamp((p - 0.14) / 0.2));
@@ -1599,190 +1686,19 @@ window.addEventListener('resize', measure);
 window.addEventListener('load', measure);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
 
-/* ═══════════════════════════════════════════════════════════════════
-   PATH EDITOR — a full-screen SVG overlay with draggable control points
-   for the two crossing dashboard paths. Dragging a handle rewrites the
-   fractions in DASH_PATHS, rebuilds the world polylines, and the dots
-   follow live. Copy the baked text from the GUI to hardcode a layout.
-   ═══════════════════════════════════════════════════════════════════ */
+/* ─── Path/arc value dumps ───────────────────────────────────────────
+   The live drag-editors for the dashboard crossing paths and the collect
+   split arcs were removed once both were baked (DASH_PATHS / COLLECT_ARC).
+   These helpers still dump the current values as copy-paste text through
+   the console hooks __tilliPaths() / __tilliCollectArcs(), so a future
+   retune can bake new numbers without re-adding an editor. */
 function pathsText() {
   const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
   return `red:  ${f(DASH_PATHS.red)},\nblue: ${f(DASH_PATHS.blue)},`;
 }
-function buildPathEditor(th) {
-  const NS = 'http://www.w3.org/2000/svg';
-  const COLORS = { red: '#E4322B', blue: '#2E6BE6' };
-  const W = () => window.innerWidth, H = () => window.innerHeight;
-
-  const svg = document.createElementNS(NS, 'svg');
-  svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:54;pointer-events:none;display:none;';
-  document.body.appendChild(svg);
-
-  const curve = {}, handles = { red: [], blue: [] };
-  for (const key of ['red', 'blue']) {
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', COLORS[key]);
-    path.setAttribute('stroke-width', '3');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('opacity', '0.92');
-    svg.appendChild(path);
-    curve[key] = path;
-  }
-
-  let active = null, onChange = null;
-  /* a dragged tail bends the last arc segment too (Catmull-Rom neighbours),
-     so the parked ring must be re-laid along with the polylines */
-  const apply = () => { layoutHeroRing(th.heroRing); th.relayoutDash(); redraw(); if (onChange) onChange(); };
-
-  function redraw() {
-    const w = W(), h = H();
-    for (const key of ['red', 'blue']) {
-      /* draw the WHOLE composite (ring arc + tail) for context; only the
-         tail points get drag handles — the arc follows the ring itself */
-      const comp = compositeFracs(key === 'blue' ? 1 : 0);
-      let d = '';
-      for (let s = 0; s <= DASH_STEPS; s++) {
-        const p = sampleFrac(comp, s / DASH_STEPS);
-        d += `${s ? 'L' : 'M'}${(p[0] * w).toFixed(1)} ${(p[1] * h).toFixed(1)} `;
-      }
-      curve[key].setAttribute('d', d);
-      const last = DASH_PATHS[key].length - 1;
-      handles[key].forEach((c, idx) => {
-        c.setAttribute('cx', DASH_PATHS[key][idx][0] * w);
-        c.setAttribute('cy', DASH_PATHS[key][idx][1] * h);
-        /* filled handle = the endpoint that drives into the card */
-        c.setAttribute('fill', idx === last ? COLORS[key] : '#fff');
-      });
-    }
-  }
-
-  for (const key of ['red', 'blue']) {
-    handles[key] = DASH_PATHS[key].map((_, idx) => {
-      const c = document.createElementNS(NS, 'circle');
-      c.setAttribute('r', '9');
-      c.setAttribute('stroke', COLORS[key]);
-      c.setAttribute('stroke-width', '3');
-      c.style.cssText = 'pointer-events:auto;cursor:grab;';
-      c.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        active = { key, idx };
-        c.style.cursor = 'grabbing';
-        c.setPointerCapture(e.pointerId);
-      });
-      c.addEventListener('pointermove', (e) => {
-        if (!active || active.key !== key || active.idx !== idx) return;
-        DASH_PATHS[key][idx] = [clamp(e.clientX / W()), clamp(e.clientY / H())];
-        apply();
-      });
-      c.addEventListener('pointerup', (e) => {
-        active = null; c.style.cursor = 'grab';
-        try { c.releasePointerCapture(e.pointerId); } catch (_) { /* fine */ }
-      });
-      svg.appendChild(c);
-      return c;
-    });
-  }
-
-  window.addEventListener('resize', () => { if (svg.style.display !== 'none') redraw(); });
-  redraw();
-
-  return {
-    show(v) { svg.style.display = v ? 'block' : 'none'; if (v) redraw(); },
-    setOnChange(fn) { onChange = fn; },
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   COLLECT-ARC EDITOR — draggable control points for the two split arcs
-   (red = left stream, blue = right stream) that carry the field out of the
-   report cards and into the spiral. Each side is a cubic A→C1→C2→spiral;
-   the three shaping points A/C1/C2 are editable (screen fractions), the end
-   is anchored at the spiral centre. Dragging rewrites COLLECT_ARC and the
-   dots follow live — scroll into the Reports→Collect hand-over to watch.
-   ═══════════════════════════════════════════════════════════════════ */
 function collectArcsText() {
   const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
   return `red:  ${f(COLLECT_ARC.red)},\nblue: ${f(COLLECT_ARC.blue)},`;
-}
-function buildCollectArcEditor() {
-  const NS = 'http://www.w3.org/2000/svg';
-  const COLORS = { red: '#E4322B', blue: '#2E6BE6' };
-  const W = () => window.innerWidth, H = () => window.innerHeight;
-  const END = [0.5, 0.5];   // the spiral centre (world 0,0), where both arcs land
-
-  /* z-index 61 sits ABOVE the GUI panel (60): the root svg is pointer-events
-     none so panel clicks still pass through, but the draggable handle circles
-     (pointer-events auto) stay on top and grabbable even where the arc's
-     right-side points fall behind the top-right panel */
-  const svg = document.createElementNS(NS, 'svg');
-  svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:61;pointer-events:none;display:none;';
-  document.body.appendChild(svg);
-
-  const curve = {}, endDot = {}, handles = { red: [], blue: [] };
-  for (const key of ['red', 'blue']) {
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', COLORS[key]);
-    path.setAttribute('stroke-width', '3');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('opacity', '0.92');
-    svg.appendChild(path);
-    curve[key] = path;
-    const e = document.createElementNS(NS, 'circle');
-    e.setAttribute('r', '6'); e.setAttribute('fill', COLORS[key]); e.setAttribute('opacity', '0.5');
-    svg.appendChild(e);
-    endDot[key] = e;
-  }
-
-  let active = null, onChange = null;
-  function redraw() {
-    const w = W(), h = H();
-    for (const key of ['red', 'blue']) {
-      const p = COLLECT_ARC[key];
-      const px = (i) => p[i][0] * w, py = (i) => p[i][1] * h;
-      curve[key].setAttribute('d',
-        `M${px(0).toFixed(1)} ${py(0).toFixed(1)} C${px(1).toFixed(1)} ${py(1).toFixed(1)} ${px(2).toFixed(1)} ${py(2).toFixed(1)} ${(END[0] * w).toFixed(1)} ${(END[1] * h).toFixed(1)}`);
-      endDot[key].setAttribute('cx', END[0] * w); endDot[key].setAttribute('cy', END[1] * h);
-      handles[key].forEach((c, idx) => {
-        c.setAttribute('cx', p[idx][0] * w); c.setAttribute('cy', p[idx][1] * h);
-        c.setAttribute('fill', idx === 0 ? COLORS[key] : '#fff');   // filled = the start anchor
-      });
-    }
-  }
-
-  for (const key of ['red', 'blue']) {
-    handles[key] = COLLECT_ARC[key].map((_, idx) => {
-      const c = document.createElementNS(NS, 'circle');
-      c.setAttribute('r', '9');
-      c.setAttribute('stroke', COLORS[key]);
-      c.setAttribute('stroke-width', '3');
-      c.style.cssText = 'pointer-events:auto;cursor:grab;';
-      c.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); active = { key, idx };
-        c.style.cursor = 'grabbing'; c.setPointerCapture(e.pointerId);
-      });
-      c.addEventListener('pointermove', (e) => {
-        if (!active || active.key !== key || active.idx !== idx) return;
-        COLLECT_ARC[key][idx] = [clamp(e.clientX / W()), clamp(e.clientY / H())];
-        redraw(); if (onChange) onChange();
-      });
-      c.addEventListener('pointerup', (e) => {
-        active = null; c.style.cursor = 'grab';
-        try { c.releasePointerCapture(e.pointerId); } catch (_) { /* fine */ }
-      });
-      svg.appendChild(c);
-      return c;
-    });
-  }
-
-  window.addEventListener('resize', () => { if (svg.style.display !== 'none') redraw(); });
-  redraw();
-
-  return {
-    show(v) { svg.style.display = v ? 'block' : 'none'; if (v) redraw(); },
-    setOnChange(fn) { onChange = fn; },
-  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1794,164 +1710,11 @@ function buildCollectArcEditor() {
    they can be added straight into scene3.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════════════
-   GUI — live controls for the hero connection network. Vanilla DOM so it
-   stays self-contained (no extra module to vendor). Collapsible; toggle
-   with the ⚙ button or the `g` key.
-   ═══════════════════════════════════════════════════════════════════ */
-function buildGUI(th) {
-  const wrap = document.createElement('div');
-  wrap.id = 'gui';
-  wrap.style.cssText = [
-    'position:fixed', 'top:16px', 'right:16px', 'z-index:60', 'width:224px',
-    'font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
-    'color:#2E3542', 'background:rgba(255,255,255,0.92)',
-    'backdrop-filter:blur(8px)', '-webkit-backdrop-filter:blur(8px)',
-    'border:1px solid rgba(46,53,66,0.12)', 'border-radius:12px',
-    'box-shadow:0 6px 24px rgba(20,20,20,0.12)', 'overflow:hidden',
-    'user-select:none',
-  ].join(';');
-
-  const head = document.createElement('div');
-  head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer;font-weight:700;letter-spacing:0.02em;';
-  head.innerHTML = '<span>Landing controls</span><span id="guiToggle" style="opacity:0.55;">⚙</span>';
-  wrap.appendChild(head);
-
-  const body = document.createElement('div');
-  body.style.cssText = 'padding:4px 12px 12px;display:flex;flex-direction:column;gap:12px;';
-  wrap.appendChild(body);
-
-  const row = (label, get, set, min, max, step) => {
-    const r = document.createElement('label');
-    r.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
-    const top = document.createElement('div');
-    top.style.cssText = 'display:flex;justify-content:space-between;';
-    const name = document.createElement('span'); name.textContent = label;
-    const val = document.createElement('span'); val.style.cssText = 'font-variant-numeric:tabular-nums;opacity:0.7;';
-    const fmt = (v) => (step < 1 ? v.toFixed(step < 0.01 ? 3 : 2) : v);
-    val.textContent = fmt(get());
-    top.append(name, val);
-    const inp = document.createElement('input');
-    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = get();
-    inp.style.cssText = 'width:100%;accent-color:#E91E8C;';
-    inp.addEventListener('input', () => {
-      const v = parseFloat(inp.value);
-      set(v); val.textContent = fmt(v);
-    });
-    r.append(top, inp);
-    body.appendChild(r);
-    return r;
-  };
-
-  const mkBtn = (label) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.style.cssText = 'font:inherit;font-weight:700;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.2);border-radius:8px;padding:6px 8px;cursor:pointer;';
-    return b;
-  };
-
-  const sectionTitle = (txt) => {
-    const t = document.createElement('div');
-    t.textContent = txt;
-    t.style.cssText = 'font-weight:700;letter-spacing:0.02em;margin-top:2px;';
-    body.appendChild(t);
-  };
-
-  /* The ring-connection settings (line colour/thickness/opacity, ring size,
-     connections-per-dot, branches, and the dot selection) are all baked into
-     HERO_CFG now, so their GUI controls have been removed. To retune, edit
-     HERO_CFG directly. The picker machinery (th.setEditMode / stepEdit) is
-     still available from the console if you need to re-pick dots. */
-
-  /* The Dashboard-flow and Reports-funnel settings (Space between sections,
-     Dot flow speed, Funnel screen height, funnel Mouth/Spout width, Position X,
-     Mouth height, Fall speed) are all baked into the consts now — CROSS_VH,
-     DASH_SPEED, FUNNEL_VH and FUNNEL_CFG — so their sliders have been removed.
-     To retune, edit those consts directly (or call setCrossVH / setFunnelVH
-     from the console). The crossing-path editor below is the only live control
-     left. `row`/`sectionTitle` are kept as helpers in case a slider is re-added. */
-
-  /* ── Mini DNA (the "Get a 360° view" / 12-skills screen) ────────────
-     Position + size of the scaled-down helix. X/Y/Z/Height re-lay the form;
-     Dot size is applied live each frame from DNA2_CFG.dotScale. */
-  sectionTitle('DNA · 12-skills view');
-  const relayDNA = () => { if (th.rebuildDNA2) th.rebuildDNA2(); };
-  row('Position X', () => DNA2_CFG.x, (v) => { DNA2_CFG.x = v; relayDNA(); }, -14, 14, 0.1);
-  row('Position Y', () => DNA2_CFG.y, (v) => { DNA2_CFG.y = v; relayDNA(); }, -10, 10, 0.1);
-  row('Position Z', () => DNA2_CFG.z, (v) => { DNA2_CFG.z = v; relayDNA(); }, -10, 10, 0.1);
-  row('Height (scale)', () => DNA2_CFG.scale, (v) => { DNA2_CFG.scale = v; relayDNA(); }, 0.2, 1.2, 0.01);
-  row('Dot size', () => DNA2_CFG.dotScale, (v) => { DNA2_CFG.dotScale = v; }, 0.2, 1.4, 0.01);
-
-  /* ── Editable dot paths ─────────────────────────────────────────────
-     Draggable red/blue control points for the two crossing streams. */
-  const pathEd = buildPathEditor(th);
-  const pathBtn = mkBtn('✏️ Edit dashboard paths: OFF');
-  pathBtn.style.width = '100%';
-  body.appendChild(pathBtn);
-
-  const pathHint = document.createElement('div');
-  pathHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
-  pathHint.textContent = 'Drag the red/blue dots to reshape the crossing paths. Scroll into the dashboard hand-over to watch the dots follow.';
-  pathHint.style.display = 'none';
-  body.appendChild(pathHint);
-
-  const pathOut = document.createElement('textarea');
-  pathOut.readOnly = true; pathOut.rows = 3;
-  pathOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;display:none;';
-  pathOut.value = pathsText();
-  body.appendChild(pathOut);
-  pathEd.setOnChange(() => { pathOut.value = pathsText(); });
-
-  let editingPaths = false;
-  pathBtn.addEventListener('click', () => {
-    editingPaths = !editingPaths;
-    pathEd.show(editingPaths);
-    pathBtn.textContent = editingPaths ? '✏️ Edit dashboard paths: ON' : '✏️ Edit dashboard paths: OFF';
-    pathBtn.style.background = editingPaths ? '#FCC30B' : '#fff';
-    pathHint.style.display = editingPaths ? 'block' : 'none';
-    pathOut.style.display = editingPaths ? 'block' : 'none';
-    pathOut.value = pathsText();
-  });
-
-  /* ── Editable collect-split arcs ────────────────────────────────────
-     Draggable red/blue control points for the two arcs that carry the
-     field out of the report cards and into the spiral. */
-  const arcEd = buildCollectArcEditor();
-  const arcBtn = mkBtn('✏️ Edit collect arcs: OFF');
-  arcBtn.style.width = '100%';
-  body.appendChild(arcBtn);
-
-  const arcHint = document.createElement('div');
-  arcHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
-  arcHint.textContent = 'Drag the red (left) / blue (right) dots to reshape the split arcs. Scroll into the Reports→Collect hand-over to watch the dots follow.';
-  arcHint.style.display = 'none';
-  body.appendChild(arcHint);
-
-  const arcOut = document.createElement('textarea');
-  arcOut.readOnly = true; arcOut.rows = 3;
-  arcOut.style.cssText = 'width:100%;font:10px/1.3 ui-monospace,Menlo,monospace;color:#2E3542;background:#fff;border:1px solid rgba(46,53,66,0.18);border-radius:8px;padding:5px;resize:vertical;box-sizing:border-box;display:none;';
-  arcOut.value = collectArcsText();
-  body.appendChild(arcOut);
-  arcEd.setOnChange(() => { arcOut.value = collectArcsText(); });
-
-  let editingArcs = false;
-  arcBtn.addEventListener('click', () => {
-    editingArcs = !editingArcs;
-    arcEd.show(editingArcs);
-    arcBtn.textContent = editingArcs ? '✏️ Edit collect arcs: ON' : '✏️ Edit collect arcs: OFF';
-    arcBtn.style.background = editingArcs ? '#FCC30B' : '#fff';
-    arcHint.style.display = editingArcs ? 'block' : 'none';
-    arcOut.style.display = editingArcs ? 'block' : 'none';
-    arcOut.value = collectArcsText();
-  });
-
-  let open = true;
-  const setOpen = (v) => { open = v; body.style.display = open ? 'flex' : 'none'; };
-  head.addEventListener('click', () => setOpen(!open));
-  window.addEventListener('keydown', (e) => { if (e.key === 'g' && !/input|textarea/i.test(e.target.tagName)) setOpen(!open); });
-
-  document.body.appendChild(wrap);
-}
+/* The live "Kids controls" panel was removed once its values were baked
+   into KID and STATE_TEXT above. The console hooks below still dump the
+   current values (__tilliKids / __tilliText) if you want to retune + rebake. */
+window.__tilliKids = () => ({ ...KID, colors: KID.colors.slice() });
+window.__tilliText = () => ({ ...STATE_TEXT });
 
 if (reduced) {
   document.getElementById('world').style.display = 'none';
@@ -1965,7 +1728,6 @@ if (reduced) {
   handAPI = three.hands;
   viewsHandsAPI = three.viewsHands;
   relayoutHero();
-  buildGUI(three);
   let f = 0;
   let lastT = performance.now();
   /* drain progress: once parked at the "Schools see…" screen, dots stop
@@ -2038,8 +1800,10 @@ if (reduced) {
        carries the shrunken dotScale, so the dots scale down in lock-step with
        the geometry as Measure→12-skills and grow back on the way out. */
     {
-      const dnaSizeOf = (idx) => (idx === ST['12 skills'] ? DNA2_CFG.dotScale : 1);
-      th.dotMat.size = BASE_DOT_SIZE * lerp(dnaSizeOf(i), dnaSizeOf(i + 1), tt);
+      const sizeOf = (idx) =>
+        idx === ST['12 skills'] ? DNA2_CFG.dotScale :
+        idx === ST['On track'] ? KID.dot / BASE_DOT_SIZE : 1;
+      th.dotMat.size = BASE_DOT_SIZE * lerp(sizeOf(i), sizeOf(i + 1), tt);
     }
     const A = th.F[i], B = th.F[i + 1];
     const P = th.P, CL = th.CL, PH = th.phases;
@@ -2242,15 +2006,7 @@ if (reduced) {
       }
     }
 
-    /* ON TRACK: each child slowly turns — term by term */
-    {
-      const wgt = hold(ST['On track']);
-      if (wgt > 0.01) {
-        const centers = [-9.5, 0, 9.5];
-        const ang = time * 0.3 * wgt;
-        for (let n = 0; n < N; n++) rotXY(P, n * 3, centers[n % 3], -1.2, ang);
-      }
-    }
+    /* ON TRACK: the children hold still — no rotation. */
 
     /* FUNNEL WATERFALL: across the Funnel screen and the Reports funnel, the
        funnel dots continuously fall from the mouth (top) to the spout (bottom);
