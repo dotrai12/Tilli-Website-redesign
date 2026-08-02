@@ -15,6 +15,9 @@ import * as THREE from '../lib/three.module.min.js';
 const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const ease = (t) => 1 - Math.pow(1 - t, 3);
+/* cubic ease-in-out — slow start, fast middle, slow stop (used by the
+   section-snap glide) */
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const smooth = (t) => t * t * (3 - 2 * t);
 /* quintic smootherstep — zero velocity AND zero acceleration at both ends, so
    a scrubbed slide starts and stops with no perceptible jerk. */
@@ -1375,16 +1378,166 @@ const washEl = document.getElementById('wash');
 const worldEl = document.getElementById('world');
 let curScene = 0;
 
-/* land ~35% into a scene, where its stage is fully faded in */
+/* ═══════════════════════════════════════════════════════════════════
+   MAGNETIC SECTION SNAPPING
+   The site no longer free-scrolls. A small scroll gesture — a wheel
+   notch, a trackpad flick, an arrow/space key, or a touch drag — GLIDES
+   the page to the next scene's rest point instead of scrubbing along.
+   The in-between choreography (orb burst, stream crossing, funnel pour,
+   DNA build) still plays: it simply animates as the glide scrubs through
+   it. Cross + Funnel are pure transition screens with nothing to rest
+   on, so they're skipped as stops — a gesture jumps across them to the
+   content scene on the far side.
+   ═══════════════════════════════════════════════════════════════════ */
+const REST = 0.35;            // default: land this far into a scene (stage fully in)
+const SNAP_SKIP = new Set(['Cross', 'Funnel']);
+/* Snap stops are {i: sceneIndex, frac: fraction into that scene}. Most
+   scenes are one stop at REST, but the hero scene holds TWO beats in its
+   240vh — the orb ("How do schools decide?") and the ring it bursts into
+   ("They measure… 2,895 data points") — so it gets its own two stops.
+   Cross + Funnel are transition-only screens and contribute no stop. */
+const HERO = ST['Start'];
+const snapStops = [];
+scenes.forEach((s, i) => {
+  if (SNAP_SKIP.has(s.label)) return;
+  if (i === HERO) snapStops.push({ i, frac: 0.20 }, { i, frac: 0.63 });
+  else snapStops.push({ i, frac: REST });
+});
+function stopY(stop) {
+  const s = scenes[clamp(stop.i, 0, LAST)];
+  return s.top + s.len * stop.frac;
+}
+
+const SNAP = {
+  smooth: 9,       // free-scroll smoothing rate — higher tracks the wheel tighter, lower = floatier
+  wheelMult: 1.0,  // px the free-scroll target moves per unit of wheel delta
+  holdDist: 1800,  // px of scroll input you must "spend" (in one direction) to break free of a hold (all holds)
+  rearm: 70,       // px you must move off a hold before it can catch you again
+  dur: 1400,       // ms for an explicit-nav glide (Home/End, ↑/↓ buttons, anchor links)
+  fieldLag: 6,     // particle/scene interpolation rate — LOWER = dots ease between states more softly
+                   //   during a transition; raise toward 40+ to make them track the scroll 1:1
+};
+window.__tilliSnap = SNAP;   // tune any of these live from the console
+
+/* ── Section HOLDS ───────────────────────────────────────────────────
+   There's no magnetic snapping — you free-scroll with soft easing. But
+   when the page REACHES a holding section it STICKS there and won't move
+   on until you've SPENT `dist` px of scroll input (in one direction), so
+   each screen gets a beat to land. Distance, not time — a fast and a slow
+   scroller do the same work. Pick which screens hold by data-label; full
+   ordered list:
+     Start · Cross · Dashboard · Funnel · Reports · Collect · 3 views ·
+     Measure · 12 skills · On track · Ask-Tilli · Impact · Journey · Let's talk
+   (Cross + Funnel are blank transition screens — normally leave them out.) */
+const HOLD_ON = new Set([
+  'Dashboard', 'Reports', '3 views', 'Measure',
+  '12 skills', 'On track', 'Ask-Tilli', 'Impact', 'Journey',
+]);   // Start (both hero beats) + Collect + Let's talk scroll through freely
+/* per-scene hold overrides — frac = where in the scene it catches (0..1;
+   later = nearer the end). All holds share SNAP.holdDist for the release
+   distance; these three just catch LATER, as they FINISH forming (just
+   before they morph to the next scene). Add `dist:` here to override one. */
+const HOLD_CFG = {
+  '3 views':   { frac: 0.62 },
+  'Measure':   { frac: 0.78 },
+  '12 skills': { frac: 0.62 },
+};
+/* one hold per enabled scene; y is read live each frame so it survives
+   re-measure. `armed` gates re-triggering while you sit on the hold. */
+const holds = scenes
+  .map((_, i) => i)
+  .filter((i) => HOLD_ON.has(scenes[i].label))
+  .map((i) => {
+    const c = HOLD_CFG[scenes[i].label] || {};
+    return { i, frac: c.frac ?? REST, dist: c.dist ?? SNAP.holdDist, armed: true };
+  });
+
+/* land ~REST into a scene, where its stage is fully faded in */
 function sceneScrollTop(i) {
   const s = scenes[clamp(i, 0, LAST)];
-  return s.top + s.len * 0.35;
+  return s.top + s.len * REST;
 }
-function goToScene(i) {
-  window.scrollTo({ top: sceneScrollTop(i), behavior: reduced ? 'auto' : 'smooth' });
+
+/* ── Smooth free-scroll with section holds ───────────────────────────
+   Wheel / touch drive a SMOOTHED free scroll (aimY, eased toward every
+   frame). Crossing a holding section pins the scroll there until you've
+   spent that hold's `dist` px of scroll input. Keys(Home/End) / buttons /
+   anchors do an explicit cubic-in-out glide. */
+let scrollMode = 'idle';               // 'idle' | 'free' | 'glide'
+let aimY = 0;                          // free-scroll target
+let glY0 = 0, glY1 = 0, glT0 = 0, glDur = 0;
+let maxY = 0, prevPosY = 0;
+/* active hold: pinned at holdY; `holdSpent` accumulates signed scroll input
+   and the hold releases once |holdSpent| ≥ holdNeed. */
+let holdActive = false, holdY = 0, holdSpent = 0, holdNeed = 0;
+const held = () => holdActive;
+
+function refreshMaxY() { maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight); }
+window.addEventListener('resize', refreshMaxY);
+window.addEventListener('load', refreshMaxY);
+refreshMaxY();
+
+const stopYs = () => snapStops.map(stopY);
+function adjacentStopY(y, dir) {          // next stop strictly beyond y in a direction
+  const ys = stopYs(), EPS = 6;
+  if (dir > 0) return ys.find((s) => s > y + EPS);
+  const b = ys.filter((s) => s < y - EPS); return b.length ? b[b.length - 1] : undefined;
 }
-document.getElementById('goPrev').addEventListener('click', () => goToScene(curScene - 1));
-document.getElementById('goNext').addEventListener('click', () => goToScene(curScene + 1));
+
+/* explicit cubic-in-out glide to an absolute y (nav only, not scrolling) */
+function glideTo(y) {
+  if (y == null) return;
+  y = clamp(y, 0, maxY);
+  holdActive = false;                     // a deliberate jump clears any active hold
+  if (reduced) { window.scrollTo(0, y); return; }
+  glY0 = window.scrollY; glY1 = y;
+  if (Math.abs(glY1 - glY0) < 1) { scrollMode = 'idle'; return; }
+  glDur = clamp(Math.abs(glY1 - glY0) / Math.max(1, window.innerHeight), 0.22, 1) * SNAP.dur;
+  glT0 = performance.now();
+  scrollMode = 'glide';
+}
+
+/* moves the scroll once per animation frame (called from the render loop) */
+function advanceScroll(now, dt) {
+  const k = 1 - Math.exp(-dt * SNAP.smooth);
+  const pos = window.scrollY;
+
+  /* active hold: ease onto the hold point and stay pinned; input is fed to
+     holdSpent by the handlers below and releases the hold via feedHold */
+  if (holdActive) {
+    const ny = lerp(pos, holdY, k);
+    window.scrollTo(0, Math.abs(holdY - ny) < 0.4 ? holdY : ny);
+    aimY = holdY;
+    prevPosY = window.scrollY;
+    return;
+  }
+
+  if (scrollMode === 'free') {
+    let ny = lerp(pos, aimY, k);
+    /* catch a re-armed hold we cross this frame → stick to it */
+    for (const h of holds) {
+      const sc = scenes[h.i];
+      const hy = sc.top + sc.len * h.frac;                        // live (survives re-measure)
+      if (Math.abs(pos - hy) > SNAP.rearm) h.armed = true;         // moved away → re-arm
+      if (h.armed && ((prevPosY < hy) !== (ny < hy))) {            // crossed hy this frame
+        h.armed = false;
+        holdActive = true; holdY = hy; holdSpent = 0; holdNeed = h.dist;
+        aimY = hy; ny = hy;
+        break;
+      }
+    }
+    window.scrollTo(0, Math.abs(aimY - ny) < 0.4 ? aimY : ny);
+  } else if (scrollMode === 'glide') {
+    const p = glDur ? clamp((now - glT0) / glDur) : 1;
+    window.scrollTo(0, glY0 + (glY1 - glY0) * easeInOut(p));
+    if (p >= 1) scrollMode = 'idle';
+  }
+  prevPosY = window.scrollY;
+}
+
+function goToScene(i) { glideTo(sceneScrollTop(i)); }
+document.getElementById('goPrev').addEventListener('click', () => glideTo(adjacentStopY(window.scrollY, -1) ?? 0));
+document.getElementById('goNext').addEventListener('click', () => glideTo(adjacentStopY(window.scrollY, 1) ?? maxY));
 
 /* in-page anchors must land inside a scene, not on its cold edge */
 document.querySelectorAll('a[href^="#"]').forEach((a) => {
@@ -1396,6 +1549,63 @@ document.querySelectorAll('a[href^="#"]').forEach((a) => {
     goToScene(i);
   });
 });
+
+/* ── input → smooth free-scroll (wheel / keys / touch) ───────────────
+   Native scroll is intercepted and re-emitted through the eased model
+   above; input is ABSORBED while a hold is active. Skipped under
+   prefers-reduced-motion (native scroll stays). */
+if (!reduced) {
+  const PAGE = new Set(['PageDown', 'PageUp', ' ', 'Spacebar']);
+  const beginFree = () => { if (scrollMode !== 'free') { aimY = window.scrollY; scrollMode = 'free'; } };
+  /* while pinned on a hold, scroll input is spent against holdNeed instead
+     of moving the page; once |holdSpent| clears it, let go and continue in
+     the push direction (nudged just past the hold so it doesn't re-catch) */
+  const feedHold = (delta) => {
+    holdSpent += delta;
+    if (Math.abs(holdSpent) >= holdNeed) {
+      const dir = Math.sign(holdSpent) || 1;
+      holdActive = false;
+      beginFree();
+      aimY = clamp(holdY + dir * (SNAP.rearm + 30), 0, maxY);
+    }
+  };
+  const nudge = (dy) => { if (holdActive) { feedHold(dy); return; } beginFree(); aimY = clamp(aimY + dy, 0, maxY); };
+
+  window.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) return;                  // leave pinch-zoom to the browser
+    e.preventDefault();                     // take over native free-scroll
+    if (holdActive) { feedHold(e.deltaY * SNAP.wheelMult); return; }   // spend input against the hold
+    beginFree();
+    aimY = clamp(aimY + e.deltaY * SNAP.wheelMult, 0, maxY);
+  }, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    const vh = window.innerHeight;
+    if (e.key === 'Home') { e.preventDefault(); glideTo(stopYs()[0]); return; }
+    if (e.key === 'End') { e.preventDefault(); const a = stopYs(); glideTo(a[a.length - 1]); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); nudge(vh * 0.2); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-vh * 0.2); return; }
+    if (PAGE.has(e.key)) { e.preventDefault(); nudge((e.key === 'PageUp' ? -1 : 1) * vh * 0.9); return; }
+  });
+
+  let touchY = null;
+  window.addEventListener('touchstart', (e) => {
+    touchY = e.touches[0].clientY;
+    if (!held()) beginFree();
+  }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (touchY == null) return;
+    const cur = e.touches[0].clientY;
+    const dy = touchY - cur;                // finger up → scroll down
+    touchY = cur;
+    if (holdActive) { feedHold(dy); return; }   // spend finger travel against the hold
+    beginFree();
+    aimY = clamp(aimY + dy, 0, maxY);
+  }, { passive: false });
+  window.addEventListener('touchend', () => { touchY = null; }, { passive: true });
+}
 
 const beatA = document.getElementById('beatA');
 const scrollHint = document.getElementById('scrollHint');
@@ -1471,8 +1681,11 @@ window.addEventListener('resize', layoutViewsText);
 /* the frame loop reads these back */
 const S = { f: 0, i: 0, p: 0, wt: 0, repIn: 0 };
 
-function onScroll() {
-  const f = stationF();
+/* fOverride lets the render loop pass a TIME-SMOOTHED f (renderF) so the
+   whole scene — dots and DOM together — eases between states during a fast
+   snap instead of jumping. Called with no arg (raw scroll) at setup. */
+function onScroll(fOverride) {
+  const f = fOverride == null ? stationF() : fOverride;
   const i = Math.min(Math.floor(f), LAST);
   const p = clamp(f - i);
   /* the dots hold their formation, then morph over the last stretch of
@@ -1729,13 +1942,16 @@ if (reduced) {
   viewsHandsAPI = three.viewsHands;
   relayoutHero();
   let f = 0;
+  let renderF = stationF();   // time-smoothed scroll the whole scene reads (see step)
   let lastT = performance.now();
   /* drain progress: once parked at the "Schools see…" screen, dots stop
      respawning at the start of the path and flow on to the END. 0 = full
      stream, 1 = fully drained. Reset when scrolling back above the dashboard. */
   let drainAmt = 0;
 
-  window.addEventListener('scroll', onScroll, { passive: true });
+  /* NOTE: no 'scroll' listener here — the render loop drives onScroll every
+     frame with the smoothed renderF, so a raw scroll-event call would fight
+     it. (The reduced-motion branch keeps its own raw scroll listener.) */
   window.__tilliScroll = onScroll;
 
   // hero entrance: the question fades in over the scattered dots
@@ -1761,7 +1977,15 @@ if (reduced) {
   function step(now) {
     const dt = Math.min((now - lastT) / 1000, 0.05);
     lastT = now;
-    f = onScroll();
+    /* hybrid scroll first (moves window.scrollY this frame), then read it and
+       ease renderF toward it: the whole scene (dots + DOM) interpolates
+       between states during a fast snap instead of jumping. renderF snaps to
+       the exact target once close so resting formations stay pixel-accurate. */
+    advanceScroll(now, dt);
+    const rawF = stationF();
+    renderF += (rawF - renderF) * (1 - Math.exp(-dt * SNAP.fieldLag));
+    if (Math.abs(rawF - renderF) < 0.0004) renderF = rawF;
+    f = onScroll(renderF);
 
     if (!three) { return; }
     const th = three;
