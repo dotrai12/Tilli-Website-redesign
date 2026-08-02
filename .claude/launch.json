@@ -4,7 +4,7 @@
     {
       "name": "tilli-site",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd /tmp && exec ruby -e 'require \"webrick\"; WEBrick::HTTPServer.new(Port: 8742, DocumentRoot: \"/private/tmp/claude-501/-Users-dotrai-Desktop-Tilli-Tilli-Website-redesign/896532f3-a9d9-4f6f-823d-103de237994f/scratchpad/site\").start'"],
+      "runtimeArgs": ["-c", "cd /tmp && exec ruby -e 'require \"webrick\"; WEBrick::HTTPServer.new(Port: 8742, DocumentRoot: \"/private/tmp/claude-501/-Users-dotrai-Desktop-Tilli-Tilli-Website-redesign/e90bd1c4-99f2-473c-a56d-49c9ac7dbcc8/scratchpad/site\").start'"],
       "port": 8742
     }
   ]

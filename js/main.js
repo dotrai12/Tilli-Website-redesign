@@ -25,9 +25,11 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
    Each `.scene` is an empty scroll spacer that owns a slice of the
    scrollbar; its `.stage` is position:fixed at the viewport. Sections
    dissolve into each other through the dot field rather than travelling —
-   with two deliberate exceptions around the empty CROSS screen: the hero
-   rides up and out as CROSS takes over, and the dashboard climbs in from
-   below as CROSS hands off to it (see SCROLL_AT and the climb-in block).
+   with one deliberate exception around the CROSS screen: the dashboard
+   climbs in from below as CROSS hands off to it (see the climb-in block).
+   The hero text no longer travels — it holds centre and fades out while the
+   two dot streams cross paths IN FRONT of it (the dot field is lifted above
+   the content for the crossing; see liftDots / heroGone in onScroll).
 
    Tunables:
      FADE_LEN   how long (in scene-units) a stage takes to fade in/out
@@ -50,7 +52,8 @@ const STEP_FADE = 0.22;
    "Space between sections" slider sizes the CROSS scene — the crossing
    space itself (see setCrossVH). */
 const MORPH_AT = 0.68;   // Start fraction where the dots start leaving the ring
-const SCROLL_AT = 0.74;  // Start fraction where the hero content rides up and out
+const SCROLL_AT = 0.74;  // Start fraction anchor for the dashboard card's zoom ramp
+                         // (the hero text now fades in place — see onScroll/heroGone)
 let CROSS_VH = 150;      // Cross-scene scroll length (vh) — driven by the GUI slider
 const FIT_PAD = 34;
 
@@ -414,7 +417,7 @@ const STREAM_Z = -5.5;
 const RING_Z = -3;        // the ring's dot plane — the arc portion sits here
 const DASH_ROLL = 1.2;    // depth roll (world units) so the flow ribbon isn't flat
 const DASH_STEPS = 96;    // spline samples per path — resolution of the flow line
-const DASH_SPEED = 0.07;  // how fast dots cycle along the flow (cycles/sec)
+let DASH_SPEED = 0.07;    // how fast dots move along the path (cycles/sec) — GUI "Dot flow speed"
 const RING_JIT = 2.4;     // band width while parked in the ring (× base jitter)
 const FLOW_JIT = 0.3;     // band width once flowing into the card (× base jitter)
 const ARC_PTS = 6;        // control points auto-laid along each ring half
@@ -423,14 +426,18 @@ const ARC_CUT = 0.55;     // radians trimmed off the ring bottom where the flow 
    the card) driven across three scenes. FLOW_CROSS is φ when the CROSS
    screen is centred — i.e. how far along the flow the crossing sits. */
 const FLOW_CROSS = 0.5;
-/* Tails in viewport fractions [x,y] (0..1). The 2nd point of each is the
-   SHARED crossing point — both paths pass through it, so they cross there,
-   on-screen, in the empty band between the two sections. Drag that middle
-   handle to move where they cross. Left arc → arches up, crosses centre,
-   dives into the card's RIGHT edge; right arc → mirror, card's LEFT edge. */
+/* Tails in viewport fractions [x,y] (0..1). Each stream now has SIX control
+   points for finer trajectory control, and the two are a perfect mirror about
+   x = 0.5 (blue[k] = [1 - red[k][0], red[k][1]]) so the crossing stays
+   symmetric. The 3rd point of each (index 2) is the SHARED crossing point at
+   x = 0.5 — both paths pass through it, so they cross there, on-screen, over
+   the hero text. red = left ring half → sweeps up, crosses top-centre, fans
+   down into the RIGHT corner; blue = mirror into the LEFT corner. Drag any
+   handle in the path editor to reshape; keep index 2 at x = 0.5 to keep the
+   crossing centred (and, ideally, mirror the two sides to stay symmetric). */
 const DASH_PATHS = {
-  red:  [[0.300, 0.800], [0.500, 0.640], [0.620, 0.740], [0.670, 0.900]],
-  blue: [[0.700, 0.800], [0.500, 0.640], [0.380, 0.740], [0.330, 0.900]],
+  red:  [[0.335, 0.680], [0.420, 0.360], [0.500, 0.140], [0.843, 0.187], [0.946, 0.493], [0.776, 0.671]],
+  blue: [[0.665, 0.680], [0.580, 0.360], [0.500, 0.140], [0.157, 0.187], [0.054, 0.493], [0.224, 0.671]],
 };
 /* world-space polylines the dots actually follow, rebuilt from the ring
    geometry + DASH_PATHS. DASH_R = path param where the arc ends, DASH_CS =
@@ -1110,6 +1117,9 @@ function initThree() {
    DOM CHOREOGRAPHY
    ═══════════════════════════════════════════════════════════════════ */
 const washEl = document.getElementById('wash');
+/* the dot field canvas — lifted above the page content while the two
+   streams cross paths, so the crossing happens IN FRONT of the hero text */
+const worldEl = document.getElementById('world');
 let curScene = 0;
 
 /* land ~35% into a scene, where its stage is fully faded in */
@@ -1210,9 +1220,15 @@ function onScroll() {
      the crossing screen takes over, and the dashboard climbs in from below
      over the Cross tail. The dots carry the continuity across both. */
   const crossI = ST['Cross'], dashI = ST['Dashboard'];
-  const heroUp = smooth(clamp((f - SCROLL_AT) / (crossI - SCROLL_AT)));
-  const CLIMB = 0.5;
-  const dashUp = smooth(clamp((f - (dashI - CLIMB)) / CLIMB));
+  /* The dots now CROSS PATHS IN FRONT of the hero text. The hero stays
+     centred (no ride-up) and simply fades out as the two streams sweep over
+     it, while the whole dot field is lifted above the page content for the
+     duration of the crossing — then dropped back so the streams pour BEHIND
+     the dashboard card as before. */
+  const fCrossCentre = crossI + 0.35;               // f where the two streams cross
+  const heroGone = smooth(clamp((f - (fCrossCentre - 0.18)) / 0.24));
+  const liftDots = f > MORPH_AT + 0.02 && f < fCrossCentre + 0.12;
+  if (worldEl) worldEl.style.zIndex = liftDots ? '3' : '1';
 
   scenes.forEach((sc, k) => {
     const a = k === 0 ? -FADE_LEN * 1.5 : k - FADE_OVER;
@@ -1223,11 +1239,19 @@ function onScroll() {
        opacity across their boundary instead of dissolving */
     let ty = 0;
     if (k === 0) {
-      ty = -heroUp;                                  // hero rides up and out
-      if (f > SCROLL_AT && f < crossI) op = 1;
+      /* the hero text stays centred and FADES as the dot streams cross paths
+         in front of it (they're lifted above the content — see liftDots
+         above); it no longer rides up and out */
+      op = 1 - heroGone;
     } else if (k === dashI) {
-      if (f < dashI) ty = 1 - dashUp;                // dashboard climbs in from below
-      if (f > dashI - CLIMB) op = 1 - smooth(clamp((f - (dashI + 1 - FADE_LEN)) / FADE_LEN));
+      /* "Schools see…" only appears once the dot streams have ALMOST reached
+         the end of their path (φ ≈ 0.9 → 1, right at the Dashboard station):
+         it climbs in from below and fades in together over a short, LATE
+         window — instead of riding in through the whole pour. */
+      const appear = smooth(clamp((f - (dashI - 0.12)) / 0.22));   // f ≈ 1.88 → 2.10
+      const toReports = smooth(clamp((f - (dashI + 1 - FADE_LEN)) / FADE_LEN));
+      ty = 1 - appear;                               // climbs in from below, late
+      op = appear * (1 - toReports);
     }
     if (sc.stage && ty !== sc.ty) {
       sc.stage.style.transform = ty ? `translate3d(0, ${(ty * 100).toFixed(3)}%, 0)` : '';
@@ -1540,6 +1564,13 @@ function buildGUI(th) {
   gapHint.textContent = 'Height (vh) of the crossing screen where the dots cross paths.';
   body.appendChild(gapHint);
 
+  row('Dot flow speed', () => DASH_SPEED, (v) => { DASH_SPEED = v; }, 0.01, 0.30, 0.005);
+
+  const speedHint = document.createElement('div');
+  speedHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
+  speedHint.textContent = 'How fast the dots travel along the path (cycles/sec).';
+  body.appendChild(speedHint);
+
   const rule2 = document.createElement('div');
   rule2.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
   body.appendChild(rule2);
@@ -1597,6 +1628,10 @@ if (reduced) {
   buildGUI(three);
   let f = 0;
   let lastT = performance.now();
+  /* drain progress: once parked at the "Schools see…" screen, dots stop
+     respawning at the start of the path and flow on to the END. 0 = full
+     stream, 1 = fully drained. Reset when scrolling back above the dashboard. */
+  let drainAmt = 0;
 
   window.addEventListener('scroll', onScroll, { passive: true });
   window.__tilliScroll = onScroll;
@@ -1726,7 +1761,7 @@ if (reduced) {
          hit the crossing centred on the Cross screen, finish just inside
          the Dashboard */
       const fLeave = MORPH_AT;          // Start is scene 0, so abs f == fraction
-      const fCross = crossI + 0.5;
+      const fCross = crossI + 0.35;     // cross while the hero text is still fading over it
       const fArrive = dashI + 0.12;
       let phi;                          // 0 = ring, FLOW_CROSS = crossing, 1 = card
       if (f <= fLeave) phi = 0;
@@ -1735,21 +1770,43 @@ if (reduced) {
       /* engage the override over the whole flow, then release it as the
          Dashboard hands over to Reports */
       const engage = si >= dashI ? hold(dashI) : smooth(clamp((f - fLeave) / 0.12));
+      /* DRAIN: once the scroll has reached / stopped at the "Schools see…"
+         screen, stop feeding new dots in at the START of the path — advance
+         each dot along the band to the END (no wrap) and dissolve it there,
+         so the stream drains empty instead of looping forever. drainAmt only
+         grows while parked at the Dashboard station; scrolling back above it
+         refills the stream. */
+      const arrivedDash = si >= dashI;
+      drainAmt = arrivedDash ? Math.min(1, drainAmt + dt * DASH_SPEED) : 0;
       if (engage > 0.01) {
         const travel = phi * DASH_CS;
-        /* the endless card-cycle only takes over once the pour is basically
-           done, so the crossing itself stays scrubbable (no drift) */
+        /* the card-flow only takes over once the pour is basically done, so
+           the crossing itself stays scrubbable (no drift) */
         const settle = smooth(clamp((phi - 0.75) / 0.25));
         for (let n = 0; n < N; n++) {
           const k = n * 3;
           dashPoint(dotSide[n], dotQ[n] + travel, k, sp);
           let tx = sp[0], ty = sp[1], tz = sp[2];
           if (settle > 0.001) {
-            const tC = DASH_CS + ((th.streamT[n] + time * DASH_SPEED) % 1) * (1 - DASH_CS);
+            /* non-wrapping progress toward the end of the band: at drainAmt 0
+               each dot rests at its queue slot; as it grows they all flow to
+               the end (bandPhase → 1) and stop, no respawn at the start */
+            const bandPhase = Math.min(1, th.streamT[n] + drainAmt);
+            const tC = DASH_CS + bandPhase * (1 - DASH_CS);
             dashPoint(dotSide[n], tC, k, sp);
             tx = lerp(tx, sp[0], settle);
             ty = lerp(ty, sp[1], settle);
             tz = lerp(tz, sp[2], settle);
+            /* dissolve into the white background as it reaches the very end,
+               so the path empties cleanly rather than piling dots on the end
+               point. Gated by engage so dots regain colour if we leave to
+               Reports (engage → 0) instead of flickering. */
+            const fadeEnd = smooth(clamp((bandPhase - 0.86) / 0.14)) * settle * drainAmt * engage;
+            if (fadeEnd > 0.001) {
+              CL[k] = lerp(CL[k], 1, fadeEnd);
+              CL[k + 1] = lerp(CL[k + 1], 1, fadeEnd);
+              CL[k + 2] = lerp(CL[k + 2], 1, fadeEnd);
+            }
           }
           P[k] = lerp(P[k], tx, engage);
           P[k + 1] = lerp(P[k + 1], ty, engage);
@@ -1836,4 +1893,5 @@ if (reduced) {
   window.__tilliThree = () => three;
   window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
   window.__tilliPaths = () => ({ paths: DASH_PATHS, text: pathsText() });
+  window.__tilliDrain = () => drainAmt;
 }
