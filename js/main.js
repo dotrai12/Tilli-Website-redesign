@@ -298,6 +298,7 @@ function sphereHero(pos) {
 /* refill the two hero layouts (orb + burst scatter) — run at build, on
    resize, and whenever a GUI control moves the orb/hand */
 let handAPI = null;
+let viewsHandsAPI = null;
 function relayoutHero() {
   if (!three) return;
   sphereHero(three.F[0].pos);
@@ -574,12 +575,13 @@ const funZ = new Float32Array(N);   // depth
 
 /* COLLECT SPLIT flow — after the Reports cards settle, the field divides into a
    left half and a right half, each sweeping OUT from the side of the report
-   images, arcing down and around, then merging into the spiral (the Collect
-   scene). Filled from the spiral formation as it's built. spiralPos = each dot's
-   spiral target; collectSide = which side it exits from (−1 left / +1 right,
-   by its target's x); collectFrac = a stable stagger so the dots string out
-   along the arc as a continuous ribbon rather than all moving in lockstep. */
-const spiralPos = new Float32Array(N * 3);
+   images, arcing down and around, then merging into one dense BALL that holds
+   in the centre of the screen (the Collect scene — no spiral). Filled from the
+   cluster formation as it's built. collectPos = each dot's target in the ball;
+   collectSide = which side it exits from (−1 left / +1 right, by its target's
+   x); collectFrac = a stable stagger so the dots string out along the arc as a
+   continuous ribbon rather than all moving in lockstep. */
+const collectPos = new Float32Array(N * 3);
 const collectSide = new Int8Array(N);
 const collectFrac = new Float32Array(N);
 (() => { const r = rng(214); for (let i = 0; i < N; i++) collectFrac[i] = r(); })();
@@ -594,6 +596,26 @@ const collectFrac = new Float32Array(N);
 const COLLECT_ARC = {
   red:  [[0.31, 0.28], [0.07, 0.43], [0.19, 0.87]],
   blue: [[0.69, 0.28], [0.93, 0.43], [0.81, 0.87]],
+};
+
+/* 3 VIEWS — the three orbs' world centres (x, shared y, shared z) plus each
+   orb's own axial spin. Shared by the formation and the per-orb planet spin so
+   they always line up. Each orb is a real 3-D SPHERE that turns on its own
+   vertical axis (x–z rotation) at its own rate/direction — so they read as
+   three spinning planets, not flat on-screen swirls. */
+const VIEWS_CX = [-9, 0, 9];
+const VIEWS_CY = 0.8;
+const VIEWS_Z = -4;
+const VIEWS_R = 3.4;                       // sphere radius (world)
+const VIEWS_ZD = 1.0;                      // 1 = a true sphere (no z-stretch → no egg wobble)
+const VIEWS_SPIN = [0.26, -0.19, 0.32];    // rad/s per orb (sign = direction)
+
+/* 3 VIEWS — the two Milo hands that frame the orbs from the sides (image
+   layout): screen-fraction centre, size as a viewport-width fraction, flip to
+   mirror, and X/Y/Z rotation to angle the reach inward. Baked from the GUI. */
+const VIEWS_HANDS = {
+  left:  { x: 0.125, y: 0.690, scale: 0.245, flipX: true,  flipY: false, rotX: 0, rotY: 0, rotZ: 18 },
+  right: { x: 0.875, y: 0.690, scale: 0.245, flipX: false, flipY: false, rotX: 0, rotY: 0, rotZ: -18 },
 };
 
 function buildFormations() {
@@ -700,38 +722,48 @@ function buildFormations() {
   layoutReportsFunnel();
   F.push(fan);
 
-  /* 3 · COLLECT — the data spirals into one rotating circle. The pink dots
-     (i%5===4) are already faded to white here: as the split streams merge into
-     the spiral they slowly disappear, so the settled spiral carries no pink. */
+  /* 3 · COLLECT — the two split streams merge into one big dense BALL that
+     holds in the centre of the screen (no spiral). Uniform-density disc so it
+     reads as a solid cluster. The pink dots (i%5===4) are faded to white here
+     so the settled cluster carries no pink, matching the fade that runs as the
+     streams gather. */
   {
-    const sp = make();
+    const cl = make();
     const r = rng(44);
+    const R = 7.4;                                   // cluster radius (world) — the big centred ball
     for (let i = 0; i < N; i++) {
-      const t = i / N;
-      const ang = t * Math.PI * 7 + r() * 0.35;
-      const rad = 1.2 + t * 9.6 + (r() - 0.5) * 0.9;
-      const x = Math.cos(ang) * rad * 1.15, y = Math.sin(ang) * rad * 0.92, z = -3 - r() * 3;
-      setP(sp, i, x, y, z);
+      const ang = r() * Math.PI * 2;
+      const rad = Math.sqrt(r()) * R;                // sqrt → uniform area density
+      const x = Math.cos(ang) * rad, y = Math.sin(ang) * rad * 0.94, z = -4.5 + (r() - 0.5) * 3;
+      setP(cl, i, x, y, z);
       const pink = i % 5 === 4;
-      if (pink) { sp.col[i * 3] = 1; sp.col[i * 3 + 1] = 1; sp.col[i * 3 + 2] = 1; }
-      else setC(sp, i, MIX[i % 5]);
-      spiralPos[i * 3] = x; spiralPos[i * 3 + 1] = y; spiralPos[i * 3 + 2] = z;
+      if (pink) { cl.col[i * 3] = 1; cl.col[i * 3 + 1] = 1; cl.col[i * 3 + 2] = 1; }
+      else setC(cl, i, MIX[i % 5]);
+      collectPos[i * 3] = x; collectPos[i * 3 + 1] = y; collectPos[i * 3 + 2] = z;
       collectSide[i] = x < 0 ? -1 : 1;
     }
-    F.push(sp);
+    F.push(cl);
   }
 
-  /* 4 · 3 VIEWS — the circle divides into three coloured balls */
+  /* 4 · 3 VIEWS — the Collect ball splits into three clean 3-D SPHERES. Each
+     orb's dots sit on an evenly-spaced Fibonacci SHELL (crisp, round silhouette
+     — no ragged volume blobbing) with a hair of radial jitter, so it reads as a
+     tidy planet that spins with depth (per-orb axial spin + depth shading in
+     step()). */
   {
     const v = make();
     const r = rng(55);
-    const centers = [[-9, 0.8], [0, 0.8], [9, 0.8]];
     const colors = [C.green, C.yellow, C.cyan];
+    const GOLD = Math.PI * (3 - Math.sqrt(5));   // golden angle
+    const M = Math.ceil(N / 3);                  // ~dots per orb
     for (let i = 0; i < N; i++) {
       const k = i % 3;
-      const ang = r() * Math.PI * 2;
-      const rad = Math.sqrt(r()) * 3.4;
-      setP(v, i, centers[k][0] + Math.cos(ang) * rad, centers[k][1] + Math.sin(ang) * rad * 0.95, -3 - r() * 2.5);
+      const j = (i - k) / 3;                                 // index within this orb
+      const yy = clamp(1 - (j / (M - 1)) * 2, -1, 1);        // even from +1 (top) to −1 (bottom)
+      const rq = Math.sqrt(Math.max(0, 1 - yy * yy));        // ring radius at this latitude
+      const th = GOLD * j;
+      const rad = VIEWS_R * (0.95 + r() * 0.05);             // sit near the surface, faint jitter
+      setP(v, i, VIEWS_CX[k] + Math.cos(th) * rq * rad, VIEWS_CY + yy * rad, VIEWS_Z + Math.sin(th) * rq * rad);
       setC(v, i, colors[k], 0.06);
     }
     F.push(v);
@@ -989,6 +1021,29 @@ function initThree() {
   };
   hands.update();
 
+  /* a SECOND pair of Milo hands that frame the three 3-views orbs from the
+     sides (the image layout). Same asset; positioned by screen fraction and
+     shown only during that scene (opacity driven from step()). */
+  const viewsHandMeshes = { left: mkHand(), right: mkHand() };
+  viewsHandMeshes.left.material.opacity = 0;
+  viewsHandMeshes.right.material.opacity = 0;
+  const viewsHands = {
+    meshes: viewsHandMeshes,
+    frame(planeZ, reveal) {
+      const DEG = Math.PI / 180, vw = visHalf(HAND_Z).w;
+      for (const key of ['left', 'right']) {
+        const cfg = VIEWS_HANDS[key], m = viewsHandMeshes[key];
+        const [wx, wy] = screenFracToWorld(cfg.x, cfg.y, HAND_Z);
+        const w = cfg.scale * 2 * vw;
+        m.position.set(wx, wy, HAND_Z + planeZ);
+        m.scale.set(w * (cfg.flipX ? -1 : 1), w * HAND_ASPECT * (cfg.flipY ? -1 : 1), 1);
+        m.rotation.set((cfg.rotX || 0) * DEG, (cfg.rotY || 0) * DEG, (cfg.rotZ || 0) * DEG);
+        m.material.opacity = reveal;
+        m.visible = reveal > 0.01;
+      }
+    },
+  };
+
   /* Turn the current selection into rim-hugging connection lines, then add
      the branch offshoots. The dots are ordered around the ring with the
      SEAM at the bottom (so the chain runs bottom-right → up and over →
@@ -1200,7 +1255,7 @@ function initThree() {
     links, drawLinks, rebuildHeroNetwork, restitch: refreshLinkDraw,
     isEditing, stepEdit, setEditMode, clearSelection, resetSelection,
     selectionInfo, wiringText, getManual: () => selection.slice(),
-    hands,
+    hands, viewsHands,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -1284,6 +1339,28 @@ function pinTargets(sc) {
 const jPath = document.querySelector('[data-j-path]');
 const jBall = document.querySelector('[data-j-ball]');
 let jLen = 0;
+
+/* 3 VIEWS text labels — line each one up horizontally UNDER its orb (world x
+   ±9 / 0, matched via the same viewport perspective the orbs use), and let each
+   move vertically (VIEWS_TEXT_DY, px). layoutViewsText() runs on load + resize
+   so the alignment tracks the viewport; the GUI sliders drive the offsets. */
+const viewsRow = document.querySelector('.views-row');
+const viewsLabels = Array.from(document.querySelectorAll('.view-label'));
+const VIEWS_TEXT_DY = [101, 101, 101];   // teacher, student, parents — px vertical offset (baked)
+/* the "Every data point…" heading: nudge it in x/y and scale it. Applied on top
+   of the scroll-driven reveal scale in the views-pin handler. Baked from the GUI. */
+const VIEWS_HEAD = { dx: 0, dy: -221, scale: 1.28 };
+function layoutViewsText() {
+  if (!viewsRow) return;
+  const aspect = Math.max(0.65, window.innerWidth / Math.max(1, window.innerHeight));
+  const visW = (CAM_DIST - VIEWS_Z) * Math.tan((50 * Math.PI / 180) / 2) * aspect;   // half visible width at the orb plane
+  const orbPx = (Math.abs(VIEWS_CX[0]) / visW) * (window.innerWidth / 2);             // px, screen centre → a side orb
+  viewsRow.style.maxWidth = 'none';
+  viewsRow.style.width = Math.min(3 * orbPx - 24, window.innerWidth - 48) + 'px';     // side labels land under the side orbs
+  viewsLabels.forEach((el, k) => { el.style.position = 'relative'; el.style.top = (VIEWS_TEXT_DY[k] || 0) + 'px'; });
+}
+layoutViewsText();
+window.addEventListener('resize', layoutViewsText);
 
 /* the frame loop reads these back */
 const S = { f: 0, i: 0, p: 0, wt: 0, repIn: 0 };
@@ -1440,7 +1517,7 @@ function runPin(sc, p) {
   if (sc.pin === 'views' && T.vH) {
     const q = ease(clamp((p - 0.06) / 0.18));
     T.vH.style.opacity = String(q);
-    T.vH.style.transform = `scale(${0.97 + 0.03 * q})`;
+    T.vH.style.transform = `translate(${VIEWS_HEAD.dx}px, ${VIEWS_HEAD.dy}px) scale(${(0.97 + 0.03 * q) * VIEWS_HEAD.scale})`;
     T.vLabels.forEach((el, k) => el.classList.toggle('in', p > 0.3 + k * 0.09));
     return;
   }
@@ -1852,6 +1929,7 @@ if (reduced) {
 } else {
   three = initThree();
   handAPI = three.hands;
+  viewsHandsAPI = three.viewsHands;
   relayoutHero();
   buildGUI(three);
   let f = 0;
@@ -1969,6 +2047,15 @@ if (reduced) {
     } else if (handAPI) {
       handAPI.frame(planeZ, 1);
     }
+
+    /* the two side hands that frame the 3-views orbs (image layout): fade in as
+       the orbs finish forming, hold through the scene, fade out on the way to
+       Measure. */
+    if (viewsHandsAPI) {
+      const vI = ST['3 views'];
+      const reveal = smooth(clamp((f - (vI - 0.05)) / 0.3)) * (1 - smooth(clamp((f - (vI + 0.85)) / 0.2)));
+      viewsHandsAPI.frame(planeZ, reveal);
+    }
     /* the threads are drawn between the field's own dots once the ring has
        settled — the actual layout happens below, after idle breathing, so
        the quads land exactly on the live dot positions. The web is a fixed
@@ -2043,12 +2130,34 @@ if (reduced) {
       }
     }
 
-    /* COLLECT: the spiral keeps rotating till scroll */
+    /* COLLECT: the cluster ball simply HOLDS in the centre (idle breathing only,
+       no spin) — so when it splits into the 3 views the groups translate
+       straight out from the centre with no swirl. */
+
+    /* 3 VIEWS: the Collect ball splits into three SPHERES; each then turns on
+       its OWN vertical axis — its own rate and direction — like a planet. This
+       is a real 3-D rotation in the x–z plane (rotate2D), NOT a flat on-screen
+       swirl, and each dot on the FAR side of its sphere washes toward the
+       background, so the orbs read with depth as they spin. The spin weight
+       (hold) is continuous across the Collect→3-views boundary, so the orbs are
+       already turning as they finish forming. */
     {
-      const wgt = hold(ST['Collect']);
-      if (wgt > 0.01) {
-        const ang = time * 0.45 * wgt;
-        for (let k = 0; k < N * 3; k += 3) rotXY(P, k, 0, 0, ang);
+      const vI = ST['3 views'];
+      /* start ONLY after the orbs have finished forming (f > vI), ramp in over
+         the first bit of the scene, fade out over its tail — so nothing spins
+         during the split itself */
+      const spinWgt = smooth(clamp((f - (vI + 0.06)) / 0.28)) * (1 - smooth(clamp((f - (vI + 0.75)) / 0.25)));
+      if (spinWgt > 0.01) {
+        const zSpan = 2 * VIEWS_R * VIEWS_ZD;
+        for (let n = 0; n < N; n++) {
+          const k = n * 3, o = n % 3;
+          rotate2D(P, k, VIEWS_CX[o], VIEWS_Z, time * VIEWS_SPIN[o] * spinWgt);
+          const depth = clamp((P[k + 2] - (VIEWS_Z - VIEWS_R * VIEWS_ZD)) / zSpan);   // 0 back → 1 front
+          const wash = (1 - depth) * (1 - depth) * spinWgt * 0.72;
+          CL[k] = lerp(CL[k], 1, wash);
+          CL[k + 1] = lerp(CL[k + 1], 1, wash);
+          CL[k + 2] = lerp(CL[k + 2], 1, wash);
+        }
       }
     }
 
@@ -2126,13 +2235,12 @@ if (reduced) {
        flows along a big cubic arc — out to the screen side, down low, then up —
        so the two streams visibly TRACE the path (a red arc on the left, a blue
        arc on the right) as they come out from BEHIND the cards. They then
-       CLUSTER into a tight clump in the centre of the screen (lifted in FRONT
-       of the cards — see the collect z-lift in onScroll) just as the cards fade
-       away, and finally that clump UNFURLS into the rotating spiral. Dots are
-       strung along the arc by an emit stagger + fixed travel time so it reads
-       as two flowing ribbons. Pink dots fade to white on the way. The endpoint
-       rides the live spinning spiral so it releases into the Collect rotation
-       with no jump. */
+       CLUSTER into one big dense ball in the centre of the screen (lifted in
+       FRONT of the cards — see the collect z-lift in onScroll) just as the
+       cards fade away, and hold there (no spiral). Dots are strung along the
+       arc by an emit stagger + fixed travel time so it reads as two flowing
+       ribbons. Pink dots fade to white on the way. The endpoint rides the live
+       spinning cluster so it releases into the Collect rotation with no jump. */
     {
       const rI = ST['Reports'], cI = ST['Collect'];
       const gStart = rI + 0.55, gEnd = cI + 0.40;
@@ -2140,14 +2248,6 @@ if (reduced) {
         const eng = smooth(clamp((f - gStart) / 0.10));
         const Pg = clamp((f - gStart) / (gEnd - gStart));   // 0..1 across the whole split
         const EMIT = 0.25, DUR = 0.40;                      // stagger span · per-dot travel time
-        /* the arriving dots gather into a tight central clump (radius = CLUMP ×
-           the spiral) while the cards disappear, then UNFURL to the full spiral
-           over the back of the split. clump z pulls to CLUMP_Z so it reads as
-           one blob in the middle, not a deep column. openP=1 (Pg→1) ⇒ scale 1,
-           so the endpoint lands exactly on the native spiral (no release jump). */
-        const CLUMP = 0.16, CLUMP_Z = -4.5;
-        const openP = smooth(clamp((Pg - 0.66) / 0.34));
-        const sc = CLUMP + (1 - CLUMP) * openP;
         const spinW = si === rI ? S.wt : 1;                 // matches the Collect rotation spin-up
         const A = time * 0.45 * spinW, cs = Math.cos(A), sn = Math.sin(A);
         /* the two arcs' control points, mapped from their editable screen
@@ -2163,11 +2263,10 @@ if (reduced) {
           const k = n * 3;
           const s = smooth(clamp((Pg - collectFrac[n] * EMIT) / DUR));   // 0 at cards → 1 in spiral
           const side = collectSide[n], left = side < 0;   // left half → red arc, right → blue
-          /* endpoint: this dot's spiral target, rotated onto the live spiral and
-             pulled toward the centre by `sc` — tight clump first, full spiral by
-             the end */
-          const sx0 = spiralPos[k], sy0 = spiralPos[k + 1];
-          const ex = (sx0 * cs - sy0 * sn) * sc, ey = (sy0 * cs + sx0 * sn) * sc, ez = lerp(CLUMP_Z, spiralPos[k + 2], sc);
+          /* endpoint: this dot's spot in the cluster ball, rotated onto the live
+             (slowly spinning) cluster */
+          const sx0 = collectPos[k], sy0 = collectPos[k + 1];
+          const ex = sx0 * cs - sy0 * sn, ey = sy0 * cs + sx0 * sn, ez = collectPos[k + 2];
           /* cubic arc: beside the cards → out to the side → down low → up into
              the spiral from the lower outside (control points are editable) */
           const pA = left ? rA : bA, pC1 = left ? rC1 : bC1, pC2 = left ? rC2 : bC2;
@@ -2229,5 +2328,7 @@ if (reduced) {
   window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
   window.__tilliPaths = () => ({ paths: DASH_PATHS, text: pathsText() });
   window.__tilliCollectArcs = () => ({ arcs: COLLECT_ARC, text: collectArcsText() });
+  window.__tilliViewsHands = () => VIEWS_HANDS;
+  window.__tilliViewsHead = () => VIEWS_HEAD;
   window.__tilliDrain = () => drainAmt;
 }
