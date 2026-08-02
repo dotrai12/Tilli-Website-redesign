@@ -317,6 +317,21 @@ const BASE_DOT_SIZE    = 1.2;        // the field's default point size (world un
    proportion), dotScale shrinks the dots to match so it reads as a true
    scaled-down copy, not a same-dot clump. All live-tunable from the GUI. */
 const DNA2_CFG = { x: 10.9, y: -0.6, z: 4.4, scale: 0.96, dotScale: 0.99 };
+/* 12-skills → On-track handover choreography (driven in step()).
+   start  the 12-skills scene fraction (0..1) where the handover begins — the
+          screen holds fully readable until here, then the DNA eases out
+   slideR world units the DNA helix eases off to the RIGHT as it exits + whitens
+   slideL world units the kids slide in from the LEFT as they colour up (walk in) */
+const SKILLS_EXIT = { start: 0.60, slideR: 19, slideL: 22 };
+/* KIDS WALK-IN — after the DNA has left and the On-track text is in, the
+   children WALK in from the left with an up/down bob, then settle. Time-based
+   (plays on its own once the section lands) so it reads as walking, not as a
+   scroll-scrubbed slide.
+   speed    walk-in rate (progress per second) — HIGHER = kids walk in faster
+   bob      vertical bob amplitude in world units — HIGHER = deeper up/down
+   bobFreq  bob cycles rate (steps) — higher = quicker, busier steps
+   slideL   world units left of their resting spot the kids start from */
+const WALK = { speed: 0.10, bob: 0.70, bobFreq: 2.5, slideL: 44 };
 function sphereHero(pos) {
   const r = rng(21);
   const c = ballWorld();
@@ -1707,7 +1722,7 @@ function onScroll(fOverride) {
      hero and dashboard: the hero rides up and out over the Start tail as
      the crossing screen takes over, and the dashboard climbs in from below
      over the Cross tail. The dots carry the continuity across both. */
-  const crossI = ST['Cross'], dashI = ST['Dashboard'];
+  const crossI = ST['Cross'], dashI = ST['Dashboard'], skillsI = ST['12 skills'], onTrackI = skillsI + 1;
   /* The dots now CROSS PATHS IN FRONT of the hero text. The hero stays
      centred (no ride-up) and simply fades out as the two streams sweep over
      it, while the whole dot field is lifted above the page content for the
@@ -1750,12 +1765,26 @@ function onScroll(fOverride) {
 
     /* the travelling scenes leave and enter by moving, so they hold full
        opacity across their boundary instead of dissolving */
-    let ty = 0;
+    let ty = 0, tx = 0;
     if (k === 0) {
       /* the hero text stays centred and FADES as the dot streams cross paths
          in front of it (they're lifted above the content — see liftDots
          above); it no longer rides up and out */
       op = 1 - heroGone;
+    } else if (k === skillsI) {
+      /* 360° cards ease OUT to the LEFT (mirror of the DNA leaving right) over
+         the exit half of the handover, fading as they go; the On-track text
+         then fades in (onTrackI branch) before the kids walk in. */
+      const ex = smoother(clamp(((clamp(f - k) - SKILLS_EXIT.start) / (1 - SKILLS_EXIT.start)) / 0.5));
+      tx = -ex;
+      op *= 1 - ex;
+    } else if (k === onTrackI) {
+      /* the On-track text arrives FIRST — it fades in over the 12-skills tail
+         (f ≈ skills+0.78 → 0.94), just as the DNA finishes leaving and before
+         the kids walk in — then holds and cross-fades out normally to Ask-Tilli. */
+      const tIn = smooth(clamp((f - (skillsI + 0.78)) / 0.16));
+      const tOut = smooth(clamp((f - (onTrackI + 1 - FADE_LEN)) / FADE_LEN));
+      op = tIn * (1 - tOut);
     } else if (k === dashI) {
       /* "Schools see…" climbs in from below (φ ≈ 0.9 → 1, right at the
          Dashboard station), holds, then physically SCROLLS up and out as the
@@ -1770,9 +1799,11 @@ function onScroll(fOverride) {
       const toCollect = smooth(clamp((f - (reportsI + 1 - FADE_LEN)) / FADE_LEN));
       op = smooth(clamp(repIn / 0.08)) * (1 - toCollect);
     }
-    if (sc.stage && ty !== sc.ty) {
-      sc.stage.style.transform = ty ? `translate3d(0, ${(ty * 100).toFixed(3)}%, 0)` : '';
-      sc.ty = ty;
+    if (sc.stage && (ty !== sc.ty || tx !== sc.tx)) {
+      sc.stage.style.transform = (tx || ty)
+        ? `translate3d(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%, 0)`
+        : '';
+      sc.ty = ty; sc.tx = tx;
     }
 
     /* the Collect beat is pure dots — it has no stage at all */
@@ -2020,6 +2051,10 @@ if (reduced) {
        what physically carries the helix right, so gate it here instead of
        letting the generic MORPH_AT tail start it mid-weave. */
     if (si === ST['Measure']) tt = smooth(clamp((S.p - 0.86) / 0.14));
+    /* 12 SKILLS → ON TRACK: the generic base-morph is switched OFF for this
+       scene (tt = 0 holds the mini-helix) — the dedicated handover block below
+       owns the whole choreography: DNA eases out right, kids walk in from left. */
+    if (si === ST['12 skills']) tt = 0;
     /* dot size tracks the position morph exactly: only the 12-skills form
        carries the shrunken dotScale, so the dots scale down in lock-step with
        the geometry as Measure→12-skills and grow back on the way out. */
@@ -2209,11 +2244,18 @@ if (reduced) {
            strand goes flat — this is what gives the mini the same 3D depth as
            the full-size helix on the Measure screen. */
         const zh = DNA_DEPTH_HALF * lerp(1, DNA2_CFG.scale, slide);
-        const ang = time * 0.4;
+        /* idle spin: ACCUMULATE the angle while the helix owns the screen, then
+           FREEZE it at the 12-skills→On-track handover (f > skI+0.9). Freezing
+           (rather than the old `time*0.4 * wgt`, which scaled a large absolute
+           angle down toward 0 as wgt faded) means the helix holds its last
+           rotation and morphs straight into the kids with no unwind spin. */
+        const spinIn = clamp((f - (dnaI - 0.35)) / 0.35);
+        if (f <= skI + SKILLS_EXIT.start) th.dnaSpin = (th.dnaSpin || 0) + dt * 0.4 * spinIn;
+        const ang = th.dnaSpin || 0;
         const reveal = f > dnaI + 0.85 ? 1 : th.dnaP; // fully woven before the slide begins
         for (let n = 0; n < N; n++) {
           const k = n * 3;
-          rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), cz, ang * wgt);
+          rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), cz, ang);
           const vis = smooth(clamp((reveal - th.dnaThresh[n]) / 0.05));
           const fade = 1 - (1 - vis) * wgt;
           CL[k] = lerp(white.r, CL[k], fade);
@@ -2230,7 +2272,62 @@ if (reduced) {
       }
     }
 
-    /* ON TRACK: the children hold still — no rotation. */
+    /* 12 SKILLS EXIT: over the first half of the scene tail the DNA (already
+       spun+shaded by the block above) eases off to the RIGHT and whitens away.
+       The kids are NOT drawn here — they walk in via the time-based block below,
+       which takes over once the helix is gone. The 360° cards slide left / the
+       On-track text fades in first — see onScroll. */
+    if (si === ST['12 skills']) {
+      const hb = clamp((S.p - SKILLS_EXIT.start) / (1 - SKILLS_EXIT.start));   // linear 0→1
+      if (hb > 0 && hb < 0.5) {
+        const outP = smoother(clamp(hb / 0.5));          // DNA exit: eased 0→1 over first half
+        const dx = SKILLS_EXIT.slideR * outP;
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          P[k] += dx;                                    // ease the spun helix off-right
+          CL[k]     = lerp(CL[k], 1, outP);
+          CL[k + 1] = lerp(CL[k + 1], 1, outP);
+          CL[k + 2] = lerp(CL[k + 2], 1, outP);
+        }
+      }
+    }
+
+    /* KIDS WALK-IN: once the DNA has cleared (f ≥ f0) and the text is in, the
+       children WALK in from the LEFT with an up/down bob, then settle. Time-based
+       (th.kidWalk advances at WALK.speed, independent of the scroll scrub) so it
+       reads as walking. Spans the 12-skills tail into On-track, and fully owns
+       the field there — overwriting the held DNA so it doesn't reappear. */
+    {
+      const skI = ST['12 skills'], onI = skI + 1;
+      const f0 = skI + 0.8;                              // hb 0.5 — the DNA has fully exited
+      const fEnd = onI + MORPH_AT;                        // where On-track starts morphing to the next scene
+      if (f >= f0 && f < fEnd) {
+        th.kidWalk = Math.min(1, (th.kidWalk || 0) + dt * WALK.speed);
+        const kids = th.F[onI];
+        const wlk = smoother(th.kidWalk);                // eased 0→1 arrival
+        const lx = WALK.slideL * (1 - wlk);              // remaining leftward offset → 0 at rest
+        const colIn = smooth(clamp(th.kidWalk / 0.1));   // colour up from white as they enter
+        /* the bob keeps hopping through the walk AND the whole On-track hold —
+           it only eases off in the last stretch before the kids morph away, so
+           there's no jump when the base-morph takes the field back. */
+        const bobEnv = smooth(clamp((fEnd - f) / 0.18));
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          /* |sin| — a HOP: rises off the baseline and returns to it each step
+             (arches ∩∩∩), never dipping below, so it reads as bobbing/walking
+             rather than a sine wave floating up and down through the line. */
+          const bob = Math.abs(Math.sin(time * WALK.bobFreq + (n % KID.count) * 1.1)) * WALK.bob * bobEnv;
+          P[k]     = kids.pos[k] - lx;
+          P[k + 1] = kids.pos[k + 1] + bob;
+          P[k + 2] = kids.pos[k + 2];
+          CL[k]     = lerp(1, kids.col[k], colIn);
+          CL[k + 1] = lerp(1, kids.col[k + 1], colIn);
+          CL[k + 2] = lerp(1, kids.col[k + 2], colIn);
+        }
+      } else if (f < f0) {
+        th.kidWalk = 0;                                  // rearm when scrolled back before the walk
+      }
+    }
 
     /* FUNNEL WATERFALL: across the Funnel screen and the Reports funnel, the
        funnel dots continuously fall from the mouth (top) to the spout (bottom);
@@ -2372,4 +2469,79 @@ if (reduced) {
   window.__tilliViewsHands = () => VIEWS_HANDS;
   window.__tilliViewsHead = () => VIEWS_HEAD;
   window.__tilliDrain = () => drainAmt;
+  buildTuneGUI(() => three);   // live sliders for the kids walk-in (press G to hide)
+}
+
+/* ── Dev tuning panel ─────────────────────────────────────────────────
+   A tiny dependency-free slider GUI wired straight to the live WALK /
+   SKILLS_EXIT config objects — drag a slider and the next frame reads it.
+   Starts visible; press G to hide/show. `Replay` rewinds the walk so you can
+   watch it again without scrolling; `Log` prints the current values so you can
+   bake them into the consts. Remove the buildTuneGUI() call above to ship. */
+function buildTuneGUI(getThree) {
+  if (document.getElementById('tuneGUI')) return;
+  const ROWS = [
+    ['Walk speed',     WALK,        'speed',   0.1, 2,  0.05],
+    ['Bob intensity',  WALK,        'bob',     0,   3,  0.05],
+    ['Bob steps/freq', WALK,        'bobFreq', 1,   20, 0.5],
+    ['Walk distance',  WALK,        'slideL',  10,  80, 1],
+    ['DNA exit start', SKILLS_EXIT, 'start',   0.3, 0.9, 0.01],
+    ['DNA exit dist',  SKILLS_EXIT, 'slideR',  10,  50, 1],
+  ];
+  const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
+  const panel = document.createElement('div');
+  panel.id = 'tuneGUI';
+  panel.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:99999;width:232px;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;letter-spacing:.02em;';
+  const title = document.createElement('span'); title.textContent = 'Kids walk-in';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press G)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  head.append(title, hide);
+  panel.appendChild(head);
+
+  ROWS.forEach(([label, obj, key, min, max, step]) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:8px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    val.textContent = fmt(obj[key], step);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = obj[key];
+    inp.style.cssText = 'width:100%;margin-top:4px;accent-color:#56C02B;cursor:pointer;';
+    inp.oninput = () => { obj[key] = parseFloat(inp.value); val.textContent = fmt(obj[key], step); };
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+  });
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:6px;margin-top:9px;';
+  const mkBtn = (txt, fn) => {
+    const b = document.createElement('button');
+    b.textContent = txt;
+    b.style.cssText = 'flex:1;all:unset;text-align:center;cursor:pointer;padding:6px 0;border-radius:7px;' +
+      'background:rgba(255,255,255,.09);transition:background .15s;';
+    b.onmouseenter = () => (b.style.background = 'rgba(255,255,255,.17)');
+    b.onmouseleave = () => (b.style.background = 'rgba(255,255,255,.09)');
+    b.onclick = fn;
+    return b;
+  };
+  bar.append(
+    mkBtn('▶ Replay', () => { const t = getThree && getThree(); if (t) t.kidWalk = 0; }),
+    mkBtn('Log', () => console.log('WALK', { ...WALK }, 'SKILLS_EXIT', { ...SKILLS_EXIT })),
+  );
+  panel.appendChild(bar);
+  document.body.appendChild(panel);
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'g' || e.key === 'G') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
 }
