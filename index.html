@@ -84,12 +84,12 @@
   .stage-panel { position: absolute; inset: 0; display: flex; align-items: center; opacity: 0; transition: opacity 0.45s ease; pointer-events: none; }
 
   /* ── 12 skills: grid left, DNA right ──────────────────────── */
-  .skills-wrap { width: 100%; max-width: 1140px; margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); gap: 24px; align-items: center; }
-  .skills-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  .skill-card { background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 16px; padding: 13px 15px; text-align: left; opacity: 0; transform: scale(0.96); transition: opacity .5s ease, transform .5s ease; }
+  .skills-wrap { width: 100%; max-width: 1280px; margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(170px, 0.85fr); gap: 24px; align-items: center; }
+  .skills-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .skill-card { background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 18px; padding: 17px 20px; text-align: left; opacity: 0; transform: scale(0.96); transition: opacity .5s ease, transform .5s ease; }
   .skill-card.in { opacity: 1; transform: scale(1); }
-  .skill-card .n { font-weight: 800; font-size: 13.5px; }
-  .skill-card .d { font-size: 11.5px; line-height: 1.4; margin-top: 3px; color: var(--tl-ink-500); }
+  .skill-card .n { font-weight: 800; font-size: 15px; }
+  .skill-card .d { font-size: 12.5px; line-height: 1.45; margin-top: 4px; color: var(--tl-ink-500); }
 
   /* ── Journey: a fixed dotted spine on the left, cards fade
         through it on the right ──────────────────────────────── */
@@ -331,13 +331,14 @@
   <div class="stage">
     <div class="step">
       <div class="step-in">
-        <div style="display: flex; flex-direction: column; gap: min(26px, 3vh);">
-          <div style="text-align: center; padding: 0 24px;">
-            <h2 style="font-size: min(42px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 auto 8px;">Get a <span style="color: var(--tl-pink-600);">360° view</span> of the student.</h2>
-            <p style="font-size: min(18px, 2.4vh); line-height: 1.5; max-width: 620px; margin: 0 auto;">12 foundational skills — measured from every side, term after term.</p>
-          </div>
+        <div style="display: flex; flex-direction: column;">
           <div class="skills-wrap">
-            <div class="skills-grid">
+            <div class="skills-main">
+              <div style="text-align: center; padding: 0 8px; margin-bottom: min(20px, 2.4vh);">
+                <h2 style="font-size: min(42px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 auto 8px;">Get a <span style="color: var(--tl-pink-600);">360° view</span> of the student.</h2>
+                <p style="font-size: min(18px, 2.4vh); line-height: 1.5; max-width: 620px; margin: 0 auto;">12 foundational skills — measured from every side, term after term.</p>
+              </div>
+              <div class="skills-grid">
               <div class="skill-card"><div class="n" style="color: var(--tl-cyan-700);">01 · Attention</div><div class="d">Focusing on relevant information and sustaining it on a task.</div></div>
               <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">02 · Working Memory</div><div class="d">Holding and using information over short periods.</div></div>
               <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">03 · Cognitive Flexibility</div><div class="d">Shifting between tasks, perspectives, and strategies.</div></div>
@@ -350,6 +351,7 @@
               <div class="skill-card"><div class="n" style="color: var(--tl-orange-500);">10 · Relationship Skills</div><div class="d">Building and maintaining positive interactions with others.</div></div>
               <div class="skill-card"><div class="n" style="color: var(--tl-green-600);">11 · Metacognition</div><div class="d">Reflecting on and understanding one's own thinking.</div></div>
               <div class="skill-card"><div class="n" style="color: var(--tl-pink-600);">12 · Critical Thinking</div><div class="d">Analysing and evaluating information to form judgments.</div></div>
+              </div>
             </div>
             <div class="helix-side"><!-- the DNA rotates here, zoomed out --></div>
           </div>
@@ -579,6 +581,6 @@
 
 </div><!-- /content -->
 
-<script type="module" src="js/main.js?v=80"></script>
+<script type="module" src="js/main.js?v=85"></script>
 </body>
 </html>

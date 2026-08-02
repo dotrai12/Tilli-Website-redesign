@@ -280,6 +280,18 @@ const heroSpread = new Float32Array(N * 3);
    3D read now comes from real perspective size-attenuation + depth-buffer
    occlusion + the atmospheric wash below.) */
 const ORB_DEPTH = 1.0;               // keep 1.0 — a true sphere at every angle
+/* MEASURE helix — volumetric depth cue: dots on the FAR side of the twist
+   wash toward the white backdrop, so the strand reads as a rounded 3D
+   cylinder catching light on its near face, not a flat ribbon of dots. */
+const DNA_DEPTH_CENTER = -3;         // z the helix twists around (its rotate2D pivot)
+const DNA_DEPTH_HALF   = 3.6;        // z half-span used to normalise near↔far (≈ helix radius)
+const DNA_DEPTH_WASH   = 0.6;        // how far the FARTHEST dots fade into the backdrop (0..1)
+const BASE_DOT_SIZE    = 1.2;        // the field's default point size (world units)
+/* MINI DNA — the helix as it sits on the "Get a 360° view" (12-skills) screen.
+   x/y/z place it, scale sets its overall size (height + radius, kept in
+   proportion), dotScale shrinks the dots to match so it reads as a true
+   scaled-down copy, not a same-dot clump. All live-tunable from the GUI. */
+const DNA2_CFG = { x: 10.9, y: -0.6, z: 4.4, scale: 0.96, dotScale: 0.99 };
 function sphereHero(pos) {
   const r = rng(21);
   const c = ballWorld();
@@ -772,16 +784,19 @@ function buildFormations() {
   /* 5 · MEASURE — a DNA of dots: green strand, cyan strand, orange
        rungs. dnaThresh[i] = when (in section progress) dot appears */
   const dnaThresh = new Float32Array(N);
-  const helixDots = (f, cx, scale, seed) => {
+  /* cx/cy/cz offset the whole helix; scale keeps height, radius and twist in
+     proportion (TW ∝ 1/scale so the number of turns is scale-invariant). */
+  const helixDots = (f, cx, cy, cz, scale, seed) => {
     const r = rng(seed);
     const R = 3.4 * scale, H = 21 * scale, TW = 0.62 / scale;
+    const z0 = DNA_DEPTH_CENTER + cz;
     for (let i = 0; i < N; i++) {
       const role = i % 3, t = ((i - role) / 3) / (N / 3); // 0..1 along strand
       const j = () => (r() - 0.5) * 0.5 * scale;
       if (role < 2) { // strands
         const y = (0.5 - t) * H;
         const ang = y * TW + (role ? Math.PI : 0);
-        setP(f, i, cx + Math.sin(ang) * R + j(), y + j(), Math.cos(ang) * R - 3 + j());
+        setP(f, i, cx + Math.sin(ang) * R + j(), cy + y + j(), z0 + Math.cos(ang) * R + j());
         setC(f, i, role ? C.cyan : C.green, 0.05);
         dnaThresh[i] = role === 0 ? t * 0.28 : 0.28 + t * 0.28;
       } else { // rungs: 14 dotted bars
@@ -789,18 +804,23 @@ function buildFormations() {
         const k = Math.floor(t * rungCount), rt = (t * rungCount) % 1;
         const y = (0.5 - (k + 0.5) / rungCount) * (H * 0.94);
         const ang = y * TW;
-        const ax = cx + Math.sin(ang) * R, az = Math.cos(ang) * R - 3;
-        const bx = cx + Math.sin(ang + Math.PI) * R, bz = Math.cos(ang + Math.PI) * R - 3;
-        setP(f, i, lerp(ax, bx, rt) + j() * 0.5, y + j() * 0.5, lerp(az, bz, rt) + j() * 0.5);
+        const ax = cx + Math.sin(ang) * R, az = z0 + Math.cos(ang) * R;
+        const bx = cx + Math.sin(ang + Math.PI) * R, bz = z0 + Math.cos(ang + Math.PI) * R;
+        setP(f, i, lerp(ax, bx, rt) + j() * 0.5, cy + y + j() * 0.5, lerp(az, bz, rt) + j() * 0.5);
         setC(f, i, C.orange, 0.05);
         dnaThresh[i] = 0.58 + (k / rungCount) * 0.22;
       }
     }
   };
-  { const dna = make(); helixDots(dna, 0, 1, 66); F.push(dna); }
+  { const dna = make(); helixDots(dna, 0, 0, 0, 1, 66); F.push(dna); }
 
-  /* 6 · 12 SKILLS — the same DNA, zoomed out to the right */
-  { const dna2 = make(); helixDots(dna2, 7.2, 0.72, 66); F.push(dna2); }
+  /* 6 · 12 SKILLS — the same DNA, offset + scaled down (DNA2_CFG). Kept as its
+     own form so the GUI can re-lay it live: rebuildDNA2() re-runs helixDots
+     into this form's buffers and the morph picks it up on the next frame. */
+  const dna2 = make();
+  const rebuildDNA2 = () => helixDots(dna2, DNA2_CFG.x, DNA2_CFG.y, DNA2_CFG.z, DNA2_CFG.scale, 66);
+  rebuildDNA2();
+  F.push(dna2);
 
   /* 7 · ON TRACK — the dots arrange themselves into children */
   {
@@ -878,7 +898,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, dnaThresh, streamT, relayoutDash, layoutReportsFunnel, layoutFunnelScene };
+  return { F, heroRing, dnaThresh, streamT, relayoutDash, layoutReportsFunnel, layoutFunnelScene, rebuildDNA2 };
 }
 
 function initThree() {
@@ -935,7 +955,7 @@ function initThree() {
      it — without this the field draws in buffer order and far dots paint
      over near ones (the orb looked inside-out). The sprite is a near-solid
      disc, so alphaTest clips only the feathered rim and edges stay clean. */
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.2, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: true, depthTest: true, alphaTest: 0.5 }));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: BASE_DOT_SIZE, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: true, depthTest: true, alphaTest: 0.5 }));
   pts.frustumCulled = false;
   scene3.add(pts);
 
@@ -1255,7 +1275,7 @@ function initThree() {
     links, drawLinks, rebuildHeroNetwork, restitch: refreshLinkDraw,
     isEditing, stepEdit, setEditMode, clearSelection, resetSelection,
     selectionInfo, wiringText, getManual: () => selection.slice(),
-    hands, viewsHands,
+    hands, viewsHands, dotMat: pts.material,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -1850,7 +1870,17 @@ function buildGUI(th) {
      To retune, edit those consts directly (or call setCrossVH / setFunnelVH
      from the console). The crossing-path editor below is the only live control
      left. `row`/`sectionTitle` are kept as helpers in case a slider is re-added. */
-  void row; void sectionTitle;
+
+  /* ── Mini DNA (the "Get a 360° view" / 12-skills screen) ────────────
+     Position + size of the scaled-down helix. X/Y/Z/Height re-lay the form;
+     Dot size is applied live each frame from DNA2_CFG.dotScale. */
+  sectionTitle('DNA · 12-skills view');
+  const relayDNA = () => { if (th.rebuildDNA2) th.rebuildDNA2(); };
+  row('Position X', () => DNA2_CFG.x, (v) => { DNA2_CFG.x = v; relayDNA(); }, -14, 14, 0.1);
+  row('Position Y', () => DNA2_CFG.y, (v) => { DNA2_CFG.y = v; relayDNA(); }, -10, 10, 0.1);
+  row('Position Z', () => DNA2_CFG.z, (v) => { DNA2_CFG.z = v; relayDNA(); }, -10, 10, 0.1);
+  row('Height (scale)', () => DNA2_CFG.scale, (v) => { DNA2_CFG.scale = v; relayDNA(); }, 0.2, 1.2, 0.01);
+  row('Dot size', () => DNA2_CFG.dotScale, (v) => { DNA2_CFG.dotScale = v; }, 0.2, 1.4, 0.01);
 
   /* ── Editable dot paths ─────────────────────────────────────────────
      Draggable red/blue control points for the two crossing streams. */
@@ -2004,6 +2034,13 @@ if (reduced) {
        what physically carries the helix right, so gate it here instead of
        letting the generic MORPH_AT tail start it mid-weave. */
     if (si === ST['Measure']) tt = smooth(clamp((S.p - 0.86) / 0.14));
+    /* dot size tracks the position morph exactly: only the 12-skills form
+       carries the shrunken dotScale, so the dots scale down in lock-step with
+       the geometry as Measure→12-skills and grow back on the way out. */
+    {
+      const dnaSizeOf = (idx) => (idx === ST['12 skills'] ? DNA2_CFG.dotScale : 1);
+      th.dotMat.size = BASE_DOT_SIZE * lerp(dnaSizeOf(i), dnaSizeOf(i + 1), tt);
+    }
     const A = th.F[i], B = th.F[i + 1];
     const P = th.P, CL = th.CL, PH = th.phases;
     for (let k = 0; k < N * 3; k += 3) {
@@ -2175,17 +2212,32 @@ if (reduced) {
       const dnaI = ST['Measure'], skI = ST['12 skills'];
       const wgt = clamp((f - (dnaI - 0.35)) / 0.35) * (1 - clamp((f - (skI + 0.9)) / 0.35));
       if (wgt > 0.01) {
-        const cx = lerp(0, 7.2, smooth(clamp((f - (dnaI + 0.86)) / 0.14)));
+        const slide = smooth(clamp((f - (dnaI + 0.86)) / 0.14));
+        const cx = lerp(0, DNA2_CFG.x, slide);
+        const cz = lerp(DNA_DEPTH_CENTER, DNA_DEPTH_CENTER + DNA2_CFG.z, slide);
+        /* the depth read tracks the helix's live centre + radius, so the
+           back-half fade keeps working once it shrinks (scale) and moves in z.
+           Pinned to the full-size span, every mini dot reads as "near" and the
+           strand goes flat — this is what gives the mini the same 3D depth as
+           the full-size helix on the Measure screen. */
+        const zh = DNA_DEPTH_HALF * lerp(1, DNA2_CFG.scale, slide);
         const ang = time * 0.4;
         const reveal = f > dnaI + 0.85 ? 1 : th.dnaP; // fully woven before the slide begins
         for (let n = 0; n < N; n++) {
           const k = n * 3;
-          rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), -3, ang * wgt);
+          rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), cz, ang * wgt);
           const vis = smooth(clamp((reveal - th.dnaThresh[n]) / 0.05));
           const fade = 1 - (1 - vis) * wgt;
           CL[k] = lerp(white.r, CL[k], fade);
           CL[k + 1] = lerp(white.g, CL[k + 1], fade);
           CL[k + 2] = lerp(white.b, CL[k + 2], fade);
+          /* volumetric depth: the back half of the twist (far from the camera)
+             recedes into the backdrop while the near face stays saturated. */
+          const depth = clamp((P[k + 2] - (cz - zh)) / (2 * zh));
+          const dw = (1 - depth) * (1 - depth) * DNA_DEPTH_WASH * wgt * vis;
+          CL[k] = lerp(CL[k], white.r, dw);
+          CL[k + 1] = lerp(CL[k + 1], white.g, dw);
+          CL[k + 2] = lerp(CL[k + 2], white.b, dw);
         }
       }
     }
