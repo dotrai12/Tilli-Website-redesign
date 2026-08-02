@@ -783,7 +783,7 @@ function buildFormations() {
         const ang = y * TW + (role ? Math.PI : 0);
         setP(f, i, cx + Math.sin(ang) * R + j(), y + j(), Math.cos(ang) * R - 3 + j());
         setC(f, i, role ? C.cyan : C.green, 0.05);
-        dnaThresh[i] = role === 0 ? t * 0.3 : 0.3 + t * 0.3;
+        dnaThresh[i] = role === 0 ? t * 0.28 : 0.28 + t * 0.28;
       } else { // rungs: 14 dotted bars
         const rungCount = 14;
         const k = Math.floor(t * rungCount), rt = (t * rungCount) % 1;
@@ -793,7 +793,7 @@ function buildFormations() {
         const bx = cx + Math.sin(ang + Math.PI) * R, bz = Math.cos(ang + Math.PI) * R - 3;
         setP(f, i, lerp(ax, bx, rt) + j() * 0.5, y + j() * 0.5, lerp(az, bz, rt) + j() * 0.5);
         setC(f, i, C.orange, 0.05);
-        dnaThresh[i] = 0.62 + (k / rungCount) * 0.3;
+        dnaThresh[i] = 0.58 + (k / rungCount) * 0.22;
       }
     }
   };
@@ -1402,7 +1402,11 @@ function onScroll() {
      cards to the front as the cards disappear and the dots cluster in the
      middle. Dropped back to 1 before the next scene's content arrives. */
   const liftCollect = f > ST['Reports'] + 0.80 && f < ST['Collect'] + 0.45;
-  if (worldEl) worldEl.style.zIndex = (liftDots || liftCollect) ? '3' : '1';
+  /* MEASURE → 12 SKILLS: the woven helix glides IN FRONT of the measure
+     cards as it slides aside, rather than ducking behind them (its dots sit
+     on the right, clear of the incoming skills grid on the left). */
+  const liftDNA = f > ST['Measure'] + 0.84 && f < ST['Measure'] + 1.12;
+  if (worldEl) worldEl.style.zIndex = (liftDots || liftCollect || liftDNA) ? '3' : '1';
 
   /* NORMAL SCROLL around the Funnel screen — the one stretch that breaks the
      seamless cross-fade. "Schools see…" physically translates UP and out as
@@ -1547,7 +1551,7 @@ function runPin(sc, p) {
     return;
   }
   if (sc.pin === 'dna' && T.stageTitles.length) {
-    const stage = p < 0.34 ? 0 : p < 0.64 ? 1 : 2;
+    const stage = p < 0.30 ? 0 : p < 0.58 ? 1 : 2;
     T.stageTitles.forEach((el, k) => { el.style.opacity = k === stage ? '1' : '0.25'; });
     T.stagePanels.forEach((el, k) => {
       const on = k === stage;
@@ -1995,6 +1999,11 @@ if (reduced) {
     if (i > th.F.length - 2) { i = th.F.length - 2; tt = 1; }
     /* 1 while scene `idx` owns the screen, easing to 0 across each handover */
     const hold = (idx) => (si === idx ? 1 - S.wt : si === idx - 1 ? S.wt : 0);
+    /* MEASURE holds its full woven helix until the orange rungs finish
+       colouring (dnaP ≈ 0.85), THEN slides aside — the dna→dna2 morph is
+       what physically carries the helix right, so gate it here instead of
+       letting the generic MORPH_AT tail start it mid-weave. */
+    if (si === ST['Measure']) tt = smooth(clamp((S.p - 0.86) / 0.14));
     const A = th.F[i], B = th.F[i + 1];
     const P = th.P, CL = th.CL, PH = th.phases;
     for (let k = 0; k < N * 3; k += 3) {
@@ -2166,9 +2175,9 @@ if (reduced) {
       const dnaI = ST['Measure'], skI = ST['12 skills'];
       const wgt = clamp((f - (dnaI - 0.35)) / 0.35) * (1 - clamp((f - (skI + 0.9)) / 0.35));
       if (wgt > 0.01) {
-        const cx = lerp(0, 7.2, smooth(clamp((f - (dnaI + 0.6)) / 0.8)));
+        const cx = lerp(0, 7.2, smooth(clamp((f - (dnaI + 0.86)) / 0.14)));
         const ang = time * 0.4;
-        const reveal = f > dnaI + 0.9 ? 1 : th.dnaP; // fully woven once past Measure
+        const reveal = f > dnaI + 0.85 ? 1 : th.dnaP; // fully woven before the slide begins
         for (let n = 0; n < N; n++) {
           const k = n * 3;
           rotate2D(P, k, cx * (si >= dnaI ? 1 : 0), -3, ang * wgt);
