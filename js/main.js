@@ -16,6 +16,9 @@ const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const ease = (t) => 1 - Math.pow(1 - t, 3);
 const smooth = (t) => t * t * (3 - 2 * t);
+/* quintic smootherstep — zero velocity AND zero acceleration at both ends, so
+   a scrubbed slide starts and stops with no perceptible jerk. */
+const smoother = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -55,6 +58,9 @@ const MORPH_AT = 0.68;   // Start fraction where the dots start leaving the ring
 const SCROLL_AT = 0.74;  // Start fraction anchor for the dashboard card's zoom ramp
                          // (the hero text now fades in place — see onScroll/heroGone)
 let CROSS_VH = 150;      // Cross-scene scroll length (vh) — driven by the GUI slider
+let FUNNEL_VH = 34;      // Funnel-scene scroll length (vh) — driven by the GUI slider.
+                         // 34vh here makes the video-bottom→report-top gap ≈ 100vh
+                         // (the Dashboard's lower half + Reports approach add ~66vh).
 const FIT_PAD = 34;
 
 /* ── Scene registry (DOM order = station order) ───────────────────── */
@@ -115,6 +121,17 @@ function setCrossVH(vh) {
   CROSS_VH = clamp(vh, 60, 400);
   const s = scenes[ST['Cross']];
   if (s) s.el.style.height = `${Math.round(CROSS_VH)}vh`;
+  measure();
+  if (typeof onScroll === 'function') onScroll();
+}
+
+/* Set the Funnel-scene height (vh) — the empty screen between "Schools see…"
+   and "Teachers share…" that the funnel pours down through. Bigger = the
+   funnel lingers longer before the reports slide in. */
+function setFunnelVH(vh) {
+  FUNNEL_VH = clamp(vh, 20, 400);
+  const s = scenes[ST['Funnel']];
+  if (s) s.el.style.height = `${Math.round(FUNNEL_VH)}vh`;
   measure();
   if (typeof onScroll === 'function') onScroll();
 }
@@ -526,6 +543,35 @@ function angleToQueue(theta) {
   return { side: 1, q: clamp((Math.PI / 2 - a) / span) * DASH_R };
 }
 
+/* ── Reports funnel ─────────────────────────────────────────────────
+   On the "Schools see…" screen the dots pour INTO the video box; on the
+   hand-over to "Teachers share…" they pour OUT of the box bottom in a
+   tapering funnel and flow down into the next screen. All five knobs are
+   live-tunable from the GUI ("Reports funnel"). Widths/height are world
+   units; x/y place the funnel MOUTH (the wide end at the box bottom) in the
+   camera-relative field space (x+ = right, y+ = up, 0,0 = screen centre). */
+const FUNNEL_CFG = {
+  maxWidth: 11,   // mouth width — the wide end (top), streaming in from above the frame
+  minWidth: 2,    // spout width — the narrow end (bottom), landing on the card top
+  x: 0,           // horizontal centre of the funnel
+  y: 16,          // mouth Y (top of the pour); the spout end tracks the card top
+  fallSpeed: 0.2, // waterfall speed — falls top→bottom per second (GUI "Fall speed")
+};
+/* the report card's top edge in world-Y at rest (measured), and one viewport
+   expressed in world units at the funnel plane. The waterfall's spout ends
+   exactly at the card's top edge, tracked live as the card slides up into
+   view (repIn) — so the pour always lands on the card, whatever its position. */
+const REPORT_CARD_TOP_Y = 9.7;
+const VIEWPORT_WORLD_H = (CAM_DIST + 4) * Math.tan((50 * Math.PI / 180) / 2) * 2; // ≈ 27.98
+/* per-dot waterfall state: a stable horizontal slot, a phase offset (where the
+   dot sits in its fall), and a depth. The step loop advances each dot's phase
+   over time, wraps it at the bottom, and fades it at the very top/bottom so the
+   loop is invisible — a continuous stream of dots pouring down the funnel. */
+const funH = new Float32Array(N);   // horizontal fraction within the width, [-0.5, 0.5]
+const funPh = new Float32Array(N);  // phase offset along the fall, [0, 1)
+const funZ = new Float32Array(N);   // depth
+(() => { const r = rng(71); for (let i = 0; i < N; i++) { funH[i] = r() - 0.5; funPh[i] = r(); funZ[i] = -4 - r() * 3; } })();
+
 function buildFormations() {
   const tmp = new THREE.Color();
   const white = new THREE.Color('#ffffff');
@@ -537,6 +583,19 @@ function buildFormations() {
   };
   const setP = (f, i, x, y, z) => { f.pos[i * 3] = x; f.pos[i * 3 + 1] = y; f.pos[i * 3 + 2] = z; };
   const MIX = [C.green, C.cyan, C.yellow, C.orange, C.pink2];
+
+  /* one dot placed inside the tapering funnel (mouth t=0 → spout t=1), from
+     the live FUNNEL_CFG — shared by the dedicated Funnel screen and the
+     Reports funnel so both track the GUI knobs. `r` is the caller's rng. */
+  const funnelDot = (f, i, r) => {
+    const t = r();
+    const width = lerp(FUNNEL_CFG.maxWidth, FUNNEL_CFG.minWidth, t);
+    setP(f, i,
+      FUNNEL_CFG.x + (r() - 0.5) * width,
+      lerp(FUNNEL_CFG.y, REPORT_CARD_TOP_Y, t) + (r() - 0.5) * 0.8,   // mouth → card top (rest)
+      -4 - r() * 3);
+    setC(f, i, MIX[i % 5]);
+  };
 
   /* 0 · HERO — dots packed into a spherical cluster cradled in the hand.
        Beat B bursts them into the ring (see layoutHeroRing / the step() burst
@@ -592,9 +651,25 @@ function buildFormations() {
     F.push(dash);
   }
 
-  /* 2 · REPORTS — funnel pouring into the cards + a heart at right */
-  {
-    const fan = make();
+  /* 2.5 · FUNNEL — the dedicated empty screen between "Schools see…" and
+       "Teachers share…". EVERY dot holds the tapering funnel (FUNNEL_CFG), so
+       the dots pour out of the box and travel down through this space; its
+       scroll length is the "Funnel screen height" GUI slider. layoutFunnelScene
+       is returned so the funnel knobs rebuild it live. */
+  const funnelForm = make();
+  const layoutFunnelScene = () => {
+    const r = rng(34);
+    for (let i = 0; i < N; i++) funnelDot(funnelForm, i, r);
+  };
+  layoutFunnelScene();
+  F.push(funnelForm);
+
+  /* 3 · REPORTS — the funnel resolves into "Teachers share…": most dots hold
+       the funnel while a quarter peel off into a heart at right ("loved by
+       parents"). Same FUNNEL_CFG so it lines up with the Funnel screen;
+       layoutReportsFunnel is returned so the GUI rebuilds it live too. */
+  const fan = make();
+  const layoutReportsFunnel = () => {
     const r = rng(33);
     for (let i = 0; i < N; i++) {
       if (i % 4 === 3) { // the heart — "loved by parents"
@@ -605,15 +680,13 @@ function buildFormations() {
           -2.5 + (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * s,
           -3 - r() * 2);
         setC(fan, i, i % 8 === 3 ? C.pink : C.pink2, 0.05);
-      } else { // the funnel from above
-        const t = r();
-        const spread = lerp(9, 2.2, t);
-        setP(fan, i, (r() - 0.5) * spread * 2 - 1, lerp(12.5, 2.5, t) + (r() - 0.5) * 1.4, -4 - r() * 3);
-        setC(fan, i, MIX[i % 5]);
+      } else { // the funnel, carried over from the Funnel screen
+        funnelDot(fan, i, r);
       }
     }
-    F.push(fan);
-  }
+  };
+  layoutReportsFunnel();
+  F.push(fan);
 
   /* 3 · COLLECT — the data spirals into one rotating circle */
   {
@@ -754,7 +827,7 @@ function buildFormations() {
     F.push(h);
   }
 
-  return { F, heroRing, dnaThresh, streamT, relayoutDash };
+  return { F, heroRing, dnaThresh, streamT, relayoutDash, layoutReportsFunnel, layoutFunnelScene };
 }
 
 function initThree() {
@@ -1194,7 +1267,7 @@ const jBall = document.querySelector('[data-j-ball]');
 let jLen = 0;
 
 /* the frame loop reads these back */
-const S = { f: 0, i: 0, p: 0, wt: 0 };
+const S = { f: 0, i: 0, p: 0, wt: 0, repIn: 0 };
 
 function onScroll() {
   const f = stationF();
@@ -1230,6 +1303,22 @@ function onScroll() {
   const liftDots = f > MORPH_AT + 0.02 && f < fCrossCentre + 0.12;
   if (worldEl) worldEl.style.zIndex = liftDots ? '3' : '1';
 
+  /* NORMAL SCROLL around the Funnel screen — the one stretch that breaks the
+     seamless cross-fade. "Schools see…" physically translates UP and out as
+     the empty Funnel screen begins (dashOut); the Funnel screen is then just
+     the dots pouring down (no stage); "Teachers share…" translates IN from
+     below as the Funnel screen ends (repIn). Both slide opaque, tiled to the
+     scrollbar, so it reads as a normal page scroll. The dot funnel is on the
+     fixed canvas, so it fills the empty screen between the two slides. */
+  const funnelI = ST['Funnel'], reportsI = ST['Reports'];
+  /* Long, smootherstep-eased windows so each stage crosses a full viewport over
+     ~60vh of scroll (≈1.7× parallax) instead of snapping over ~12–28vh — the
+     motion tracks the scroll closely, so entering/exiting feels gradual, not
+     sudden. repIn extends into the Reports scene (170vh) where there's room. */
+  const dashOut = smoother(clamp((f - (dashI + 0.60)) / 0.58));    // Dashboard up & out, into the Funnel screen
+  const repIn = smoother(clamp((f - (reportsI - 0.28)) / 0.58));   // Reports in from below, settling early in Reports
+  S.repIn = repIn;   // shared with the funnel-waterfall spout so it tracks the card 1:1
+
   scenes.forEach((sc, k) => {
     const a = k === 0 ? -FADE_LEN * 1.5 : k - FADE_OVER;
     let op = smooth(clamp((f - a) / FADE_LEN));
@@ -1244,14 +1333,18 @@ function onScroll() {
          above); it no longer rides up and out */
       op = 1 - heroGone;
     } else if (k === dashI) {
-      /* "Schools see…" only appears once the dot streams have ALMOST reached
-         the end of their path (φ ≈ 0.9 → 1, right at the Dashboard station):
-         it climbs in from below and fades in together over a short, LATE
-         window — instead of riding in through the whole pour. */
+      /* "Schools see…" climbs in from below (φ ≈ 0.9 → 1, right at the
+         Dashboard station), holds, then physically SCROLLS up and out as the
+         Funnel screen begins — opaque the whole way, hidden only once gone. */
       const appear = smooth(clamp((f - (dashI - 0.12)) / 0.22));   // f ≈ 1.88 → 2.10
-      const toReports = smooth(clamp((f - (dashI + 1 - FADE_LEN)) / FADE_LEN));
-      ty = 1 - appear;                               // climbs in from below, late
-      op = appear * (1 - toReports);
+      ty = (1 - appear) - dashOut;
+      op = appear * (1 - smooth(clamp((dashOut - 0.9) / 0.1)));
+    } else if (k === reportsI) {
+      /* "Teachers share…" SCROLLS IN from below at the end of the Funnel
+         screen; opaque as it arrives, then the normal cross-fade out to Collect. */
+      ty = 1 - repIn;
+      const toCollect = smooth(clamp((f - (reportsI + 1 - FADE_LEN)) / FADE_LEN));
+      op = smooth(clamp(repIn / 0.08)) * (1 - toCollect);
     }
     if (sc.stage && ty !== sc.ty) {
       sc.stage.style.transform = ty ? `translate3d(0, ${(ty * 100).toFixed(3)}%, 0)` : '';
@@ -1553,27 +1646,14 @@ function buildGUI(th) {
      HERO_CFG directly. The picker machinery (th.setEditMode / stepEdit) is
      still available from the console if you need to re-pick dots. */
 
-  /* ── Space between the two sections ─────────────────────────────────
-     Sizes the dedicated CROSS screen between "They measure…" and "Schools
-     see…" — the scroll length the dots have to cross paths in. */
-  sectionTitle('Dashboard flow');
-  row('Space between sections', () => CROSS_VH, (v) => setCrossVH(v), 60, 400, 10);
-
-  const gapHint = document.createElement('div');
-  gapHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
-  gapHint.textContent = 'Height (vh) of the crossing screen where the dots cross paths.';
-  body.appendChild(gapHint);
-
-  row('Dot flow speed', () => DASH_SPEED, (v) => { DASH_SPEED = v; }, 0.01, 0.30, 0.005);
-
-  const speedHint = document.createElement('div');
-  speedHint.style.cssText = 'font-size:10.5px;opacity:0.5;';
-  speedHint.textContent = 'How fast the dots travel along the path (cycles/sec).';
-  body.appendChild(speedHint);
-
-  const rule2 = document.createElement('div');
-  rule2.style.cssText = 'height:1px;background:rgba(46,53,66,0.12);margin:2px 0;';
-  body.appendChild(rule2);
+  /* The Dashboard-flow and Reports-funnel settings (Space between sections,
+     Dot flow speed, Funnel screen height, funnel Mouth/Spout width, Position X,
+     Mouth height, Fall speed) are all baked into the consts now — CROSS_VH,
+     DASH_SPEED, FUNNEL_VH and FUNNEL_CFG — so their sliders have been removed.
+     To retune, edit those consts directly (or call setCrossVH / setFunnelVH
+     from the console). The crossing-path editor below is the only live control
+     left. `row`/`sectionTitle` are kept as helpers in case a slider is re-added. */
+  void row; void sectionTitle;
 
   /* ── Editable dot paths ─────────────────────────────────────────────
      Draggable red/blue control points for the two crossing streams. */
@@ -1851,6 +1931,46 @@ if (reduced) {
         const centers = [-9.5, 0, 9.5];
         const ang = time * 0.3 * wgt;
         for (let n = 0; n < N; n++) rotXY(P, n * 3, centers[n % 3], -1.2, ang);
+      }
+    }
+
+    /* FUNNEL WATERFALL: across the Funnel screen and the Reports funnel, the
+       funnel dots continuously fall from the mouth (top) to the spout (bottom);
+       a dot that reaches the bottom vanishes (fades to the wash) and re-appears
+       at the top — so it reads as a stream pouring down. On Reports the heart
+       dots (n%4===3) peel off and stop falling as the heart blooms. */
+    {
+      const fI = ST['Funnel'], rI = ST['Reports'];
+      const funW = smooth(clamp((f - (fI - 0.1)) / 0.25)) * (1 - smooth(clamp((f - (rI + 0.85)) / 0.15)));
+      if (funW > 0.001) {
+        const heartForm = smooth(clamp((f - (fI + 0.6)) / 0.5));   // heart blooms into Reports
+        const MOUTH = FUNNEL_CFG.y, XC = FUNNEL_CFG.x;
+        /* the spout ends on the report card's TOP EDGE, tracked live as the
+           card slides up (repIn: 0 = a viewport below, 1 = at rest — same
+           progress the Reports stage slides by in onScroll). The waterfall
+           stretches from the fixed mouth down to the card top, so the pour
+           lands on the card the moment it enters and follows it to rest. */
+        const SPOUT = REPORT_CARD_TOP_Y - (1 - S.repIn) * VIEWPORT_WORLD_H;
+        for (let n = 0; n < N; n++) {
+          let w = funW;
+          if (n % 4 === 3) w *= 1 - heartForm;   // heart dots settle, stop falling
+          if (w < 0.001) continue;
+          const k = n * 3;
+          const tt = (funPh[n] + time * FUNNEL_CFG.fallSpeed) % 1;   // 0 = mouth, 1 = spout
+          const width = lerp(FUNNEL_CFG.maxWidth, FUNNEL_CFG.minWidth, tt);
+          P[k] = lerp(P[k], XC + funH[n] * width, w);
+          P[k + 1] = lerp(P[k + 1], lerp(MOUTH, SPOUT, tt), w);
+          P[k + 2] = lerp(P[k + 2], funZ[n], w);
+          /* fade in over the first 12% of the fall, out over the last 12% —
+             the appear/disappear that hides the wrap */
+          const edge = Math.min(smooth(clamp(tt / 0.12)), 1 - smooth(clamp((tt - 0.88) / 0.12)));
+          const fade = (1 - edge) * w;
+          if (fade > 0.001) {
+            CL[k] = lerp(CL[k], 1, fade);
+            CL[k + 1] = lerp(CL[k + 1], 1, fade);
+            CL[k + 2] = lerp(CL[k + 2], 1, fade);
+          }
+        }
       }
     }
 
