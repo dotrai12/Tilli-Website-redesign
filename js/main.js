@@ -2808,12 +2808,27 @@ if (reduced) {
         const pal = th._askPal || (th._askPal = [C.cyan, C.green, C.yellow].map((h) => new THREE.Color(h).lerp(white, 0.05)));
         const start0 = ASK.promptAt + ASK.flowGap;                  // grey box flow start (ms)
         const start1 = ASK.stagger + ASK.promptAt + ASK.flowGap;    // colour box flow start
+        /* SCROLL-AWAY: attach the END of the COLOURFUL path to the cursor. The
+           start (A) and first handle (C1) stay put — only the tail handle (C2)
+           and endpoint (D) rubber-band onto the pointer as you scroll past the
+           chat's rest point, so the stream keeps flowing but now pours at the
+           cursor instead of the box. `attach` 0→1 over that scroll; off on
+           touch (no pointer). The grey path is never attached. */
+        const attach = POINTER.seen ? smooth(clamp((S.p - REST) / 0.22)) : 0;
+        let bWc = bW;
+        if (attach > 0.001) {
+          const cur = screenFracToWorld(POINTER.fx, POINTER.fy, AZ);
+          const C2 = bW[2], D = bW[3];
+          bWc = [bW[0], bW[1],
+            [lerp(C2[0], cur[0], attach * 0.7), lerp(C2[1], cur[1], attach * 0.7), AZ],
+            [lerp(D[0],  cur[0], attach),       lerp(D[1],  cur[1], attach),       AZ]];
+        }
         for (let n = 0; n < N; n++) {
           const k = n * 3;
           const isGrey = n % 2 === 0;
           const own = isGrey ? greyOwn : 1;   // colourful dots never release here
           if (own <= 0.001) continue;         // grey dot fully gone → leave it to the base morph
-          const arc = isGrey ? rW : bW;
+          const arc = isGrey ? rW : bWc;
           const spd = isGrey ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
           const fst = isGrey ? start0 : start1;
           const prog = ms < 0 ? -1 : (ms - fst) / 1000 * spd;   // 0 at flow start, 1 when the front hits the box
@@ -2824,7 +2839,11 @@ if (reduced) {
             tx = bez3(arc[0][0], arc[1][0], arc[2][0], arc[3][0], t) + askJx[n] * W;
             ty = bez3(arc[0][1], arc[1][1], arc[2][1], arc[3][1], t) + askJy[n] * W;
             tz = AZ + askJz[n] * 1.2;
-            show = Math.min(smooth(clamp(t / 0.07)), 1 - smooth(clamp((t - 0.82) / 0.18)));   // fade in off-frame, out into the box
+            /* fade in off-frame; fade out INTO the box — but once the colourful
+               tail is attached to the cursor, drop that out-fade so the dots
+               actually arrive at the pointer instead of vanishing. */
+            const outFade = smooth(clamp((t - 0.82) / 0.18)) * (isGrey ? 1 : 1 - attach);
+            show = Math.min(smooth(clamp(t / 0.07)), 1 - outFade);
           } else {
             tx = arc[0][0]; ty = arc[0][1]; tz = AZ;             // un-born: parked (invisible) at the path start
             show = 0;
