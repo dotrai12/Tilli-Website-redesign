@@ -121,6 +121,11 @@
     h2 { font-size: 30px !important; }
     .foot { padding: 14px 20px; }
   }
+  /* Ask-Tilli chat "typing" indicator — three bouncing dots */
+  .tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--tl-ink-300); display: inline-block; animation: tbounce 1.25s infinite ease-in-out; }
+  .tdot:nth-child(2) { animation-delay: 0.16s; }
+  .tdot:nth-child(3) { animation-delay: 0.32s; }
+  @keyframes tbounce { 0%, 75%, 100% { transform: translateY(0); opacity: 0.35; } 35% { transform: translateY(-4px); opacity: 1; } }
 </style>
 </head>
 <body>
@@ -390,20 +395,22 @@
       <div class="step-in">
         <div class="wrap" style="text-align: center;">
           <div class="eyebrow">ASK</div>
-          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 760px;">Any AI can answer. <span style="color: var(--tl-cyan-700);">Only Tilli knows your student.</span></h2>
-          <p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 620px; margin: 0 auto min(40px, 4vh);">The same question, asked two ways. One answer is for any child. One is for <em>this</em> child.</p>
-          <div style="display: flex; gap: 32px; justify-content: center; align-items: stretch; flex-wrap: wrap; text-align: left;">
-            <div style="flex: 1; min-width: 300px; max-width: 470px; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); box-shadow: 0 2px 10px rgba(20,20,20,0.06);">
+          <h2 data-ai-h style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px auto 12px; max-width: 760px; opacity: 0; will-change: transform, opacity;">Any AI can answer. <span style="color: var(--tl-cyan-700);">Only Tilli knows your student.</span></h2>
+          <p data-ai-p style="font-size: min(18px, 2.6vh); line-height: 1.6; max-width: 620px; margin: 0 auto min(40px, 4vh); opacity: 0; will-change: opacity;">The same question, asked two ways. One answer is for any child. One is for <em>this</em> child.</p>
+          <div style="display: flex; gap: 32px; justify-content: center; align-items: stretch; flex-wrap: wrap; text-align: left; min-height: min(430px, 54vh);">
+            <div data-ai-card style="flex: 1; min-width: 300px; max-width: 470px; background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); box-shadow: 0 2px 10px rgba(20,20,20,0.06); opacity: 0; will-change: transform, opacity;">
               <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-ink-300); margin-bottom: 6px;">A GENERIC AI CHATBOT</div>
-              <div style="align-self: flex-end; background: var(--tl-surface-100); color: var(--tl-ink-700); border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help a 7-year-old who keeps losing focus in class?</div>
-              <div style="align-self: flex-start; background: var(--tl-surface-100); color: var(--tl-ink-450); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px;">Great question! Here are 10 general strategies: minimise distractions, take movement breaks, use positive reinforcement, try a reward chart…</div>
-              <div style="font-size: 13.5px; font-weight: 600; color: var(--tl-ink-450); margin-top: auto; padding-top: 14px;">Advice for the average child. It has never met yours.</div>
+              <div data-ai-q style="align-self: flex-end; background: var(--tl-surface-100); color: var(--tl-ink-700); border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px; display: none; opacity: 0; transform-origin: bottom right; will-change: transform, opacity;">How do I help a 7-year-old who keeps losing focus in class?</div>
+              <div data-ai-typing style="align-self: flex-start; background: var(--tl-surface-100); border-radius: 16px 16px 16px 4px; padding: 13px 15px; gap: 4px; align-items: center; display: none; opacity: 0; transform-origin: bottom left; will-change: transform, opacity;"><span class="tdot"></span><span class="tdot"></span><span class="tdot"></span></div>
+              <div data-ai-r style="align-self: flex-start; background: var(--tl-surface-100); color: var(--tl-ink-450); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px; display: none; opacity: 0; transform-origin: bottom left; will-change: transform, opacity;">Great question! Here are 10 general strategies: minimise distractions, take movement breaks, use positive reinforcement, try a reward chart…</div>
+              <div data-ai-foot style="font-size: 13.5px; font-weight: 600; color: var(--tl-ink-450); margin-top: auto; padding-top: 14px; opacity: 0; will-change: opacity;">Advice for the average child. It has never met yours.</div>
             </div>
-            <div data-ai-card style="flex: 1; min-width: 300px; max-width: 470px; background: var(--tl-wash-cyan); border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); will-change: transform, opacity;">
+            <div data-ai-card style="flex: 1; min-width: 300px; max-width: 470px; background: var(--tl-wash-cyan); border: 2px solid var(--tl-cyan-500); border-radius: 24px; padding: min(28px, 3vh); display: flex; flex-direction: column; gap: min(12px, 1.4vh); opacity: 0; will-change: transform, opacity;">
               <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--tl-cyan-700); margin-bottom: 6px;">ASK-TILLI · KNOWS DHRUV'S DATA</div>
-              <div style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px;">How do I help Dhruv focus in class?</div>
-              <div data-ai-ans style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px; will-change: opacity;">Dhruv's attention is at <b>Learner</b>, but his working memory is <b>Expert</b> — and his parents report the same pattern at home. Start group tasks with the Week 14 attention warm-up, then let him lead the recall step.</div>
-              <div data-ai-foot style="font-size: 13.5px; font-weight: 700; color: var(--tl-cyan-700); margin-top: auto; padding-top: 14px;">Grounded in 2,895 data points on this one child.</div>
+              <div data-ai-q style="align-self: flex-end; background: var(--tl-cyan-500); color: #fff; border-radius: 16px 16px 4px 16px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 320px; display: none; opacity: 0; transform-origin: bottom right; will-change: transform, opacity;">How do I help Dhruv focus in class?</div>
+              <div data-ai-typing style="align-self: flex-start; background: #fff; border-radius: 16px 16px 16px 4px; padding: 13px 15px; gap: 4px; align-items: center; display: none; opacity: 0; transform-origin: bottom left; will-change: transform, opacity;"><span class="tdot"></span><span class="tdot"></span><span class="tdot"></span></div>
+              <div data-ai-r style="align-self: flex-start; background: #fff; color: var(--tl-ink-700); border-radius: 16px 16px 16px 4px; padding: 11px 15px; font-size: 14px; line-height: 1.5; max-width: 340px; display: none; opacity: 0; transform-origin: bottom left; will-change: transform, opacity;">Dhruv's attention is at <b>Learner</b>, but his working memory is <b>Expert</b> — and his parents report the same pattern at home. Start group tasks with the Week 14 attention warm-up, then let him lead the recall step.</div>
+              <div data-ai-foot style="font-size: 13.5px; font-weight: 700; color: var(--tl-cyan-700); margin-top: auto; padding-top: 14px; opacity: 0; will-change: opacity;">Grounded in 2,895 data points on this one child.</div>
             </div>
           </div>
         </div>

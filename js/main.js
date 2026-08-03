@@ -22,6 +22,9 @@ const smooth = (t) => t * t * (3 - 2 * t);
 /* quintic smootherstep — zero velocity AND zero acceleration at both ends, so
    a scrubbed slide starts and stops with no perceptible jerk. */
 const smoother = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+/* ease-out-back — overshoots slightly past 1 then settles, for a WhatsApp-style
+   "pop" as a chat bubble scales in */
+const easeOutBack = (t) => { const c = 1.70158, c3 = c + 1; const u = t - 1; return 1 + c3 * u * u * u + c * u * u; };
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -331,7 +334,37 @@ const SKILLS_EXIT = { start: 0.60, slideR: 19, slideL: 22 };
    bob      vertical bob amplitude in world units — HIGHER = deeper up/down
    bobFreq  bob cycles rate (steps) — higher = quicker, busier steps
    slideL   world units left of their resting spot the kids start from */
-const WALK = { speed: 0.10, bob: 0.70, bobFreq: 2.5, slideL: 44 };
+const WALK = { speed: 0.20, bob: 1.00, bobFreq: 2.5, slideL: 44 };
+/* ON-TRACK EXIT — after the kids have walked in and held, they LEAVE in a
+   straight horizontal line as the handover to Ask-Tilli begins: the 3 LEFT
+   kids (kid 0,1,2) slide off-screen left, the 3 RIGHT kids (3,4,5) off-screen
+   right, whitening away. The Ask-Tilli formation then fades in from white over
+   the back half, so the crossover is hidden (both ends pure white). Scroll-
+   scrubbed across the On-track tail — it always finishes with the handover.
+   start  On-track scene fraction (0..1) where the kids start to leave
+   dist   world units each side travels — BIGGER = kids shoot off faster
+   holdCol  fraction of the exit the kids stay coloured before whitening (0..1)
+   textZoom scale the On-track headline shrinks to as it zooms out on exit */
+const ONTRACK_EXIT = { start: MORPH_AT, dist: 34, holdCol: 0.5, textZoom: 0.55 };
+/* ASK-TILLI reveal choreography.
+   headFrom/headIn/cardsAt are the scene's own scroll progress p (0..1) — they
+   drive the headline zoom-in and the two boxes rising in. Everything after is a
+   real-time (ms) chat that plays on its OWN clock, started the instant the boxes
+   are stable (NOT tied to scroll), so the bubbles pop in like a live chat.
+   headFrom   scale the "Any AI can…" headline zooms IN from (1 = no zoom)
+   headIn     p by which the headline has fully zoomed in
+   cardsAt    p where the two chat boxes rise in (after the headline lands)
+   stagger    ms the second box's chat lags the first (the "slight stagger")
+   promptAt   ms after the boxes settle before the prompt bubble pops in
+   flowGap    ms after the prompt before the dots START streaming down the path
+   pop        ms each bubble takes to scale in
+   (the response bubble is NOT timed here — it pops the instant the first
+    streamed dot reaches the end of its path; travel time = 1 / ASK_FLOW.speed) */
+const ASK = { headFrom: 0.72, headIn: 0.13, cardsAt: 0.30,
+  stagger: 60, promptAt: 250, flowGap: 750, pop: 300 };
+/* the chat clock (ms since the boxes stabilised) is owned by runPin('ai') and
+   shared with the dot-flow block in step() so both play off one timeline. */
+const askChat = { ms: -1 };
 function sphereHero(pos) {
   const r = rng(21);
   const c = ballWorld();
@@ -625,6 +658,11 @@ const funPh = new Float32Array(N);  // phase offset along the fall, [0, 1)
 const funZ = new Float32Array(N);   // depth
 (() => { const r = rng(71); for (let i = 0; i < N; i++) { funH[i] = r() - 0.5; funPh[i] = r(); funZ[i] = -4 - r() * 3; } })();
 
+/* ASK-TILLI card in-flow — per-dot phase along the arc + a little jitter so the
+   two streams have width. askPh = where the dot sits on its path this cycle. */
+const askPh = new Float32Array(N), askJx = new Float32Array(N), askJy = new Float32Array(N), askJz = new Float32Array(N);
+(() => { const r = rng(178); for (let i = 0; i < N; i++) { askPh[i] = r(); askJx[i] = r() - 0.5; askJy[i] = r() - 0.5; askJz[i] = r() - 0.5; } })();
+
 /* COLLECT SPLIT flow — after the Reports cards settle, the field divides into a
    left half and a right half, each sweeping OUT from the side of the report
    images, arcing down and around, then merging into one dense BALL that holds
@@ -649,6 +687,25 @@ const COLLECT_ARC = {
   red:  [[0.31, 0.28], [0.07, 0.43], [0.19, 0.87]],
   blue: [[0.69, 0.28], [0.93, 0.43], [0.81, 0.87]],
 };
+
+/* ASK-TILLI in-flow — two cubic Bézier paths the dots stream along as they pour
+   INTO the chat boxes. Each side's `pts` are 4 screen fractions (0..1, top-left
+   origin, may go off-screen): A (entry, off-frame corner) → C1 → C2 → D (the
+   card edge where dots vanish behind the box). GREY dots ride `red` into the
+   generic box; the COLOURFUL dots ride `blue` into the Ask-Tilli box.
+   Drag the handles live via the GUI "Edit ask paths" toggle. `speed` is the
+   stream's flow rate in PATH-LENGTHS PER SECOND — it also sets how long the dots
+   take to reach the box (travel = 1/speed sec), which is when that box's response
+   pops. `gray` recolours the grey dots. Bake via the __tilliAskFlow() dump. */
+const ASK_FLOW = {
+  gray: '#c3c9d4',   // colour of the grey (generic-box) dots
+  z: -3,             // world plane the streams flow on
+  width: 1.7,        // world units of stream spread (its thickness)
+  red:  { pts: [[-0.03, -0.06], [0.05, 0.30], [0.15, 0.58], [0.28, 0.60]], speed: 0.35 },
+  blue: { pts: [[1.03, -0.06], [0.95, 0.30], [0.85, 0.58], [0.72, 0.60]], speed: 0.60 },
+};
+/* one coordinate of a cubic Bézier at t */
+const bez3 = (a, b, c, d, t) => { const u = 1 - t; return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d; };
 
 /* 3 VIEWS — the three orbs' world centres (x, shared y, shared z) plus each
    orb's own axial spin. Shared by the formation and the per-orb planet spin so
@@ -876,20 +933,17 @@ function buildFormations() {
     F.push(kids);
   }
 
-  /* 8 · ASK-TILLI — generic noise on the left, Tilli's orbits right */
+  /* 8 · ASK-TILLI — the field is held WHITE (invisible) here: the visible dots
+     are drawn entirely by the time-based ASK-TILLI CARD IN-FLOW block, which
+     streams them into the two chat boxes. Keeping the form white means neither
+     entry nor the exit-morph to Impact ever flashes a static cloud. Positions
+     are a neutral spread (only the source of the invisible Impact morph). */
   {
     const ai = make();
     const r = rng(88);
     for (let i = 0; i < N; i++) {
-      if (i % 2 === 0) {
-        setP(ai, i, -9 + (r() - 0.5) * 9, (r() - 0.5) * 12, -3 - r() * 6);
-        setC(ai, i, C.gray, 0.15);
-      } else {
-        const ring = i % 6 < 2 ? 2.2 : i % 6 < 4 ? 3.8 : 5.4;
-        const ang = r() * Math.PI * 2;
-        setP(ai, i, 9 + Math.cos(ang) * ring, Math.sin(ang) * ring * 0.9, -3 - r() * 2);
-        setC(ai, i, [C.cyan, C.green, C.yellow][i % 3], 0.06);
-      }
+      setP(ai, i, (r() - 0.5) * 24, (r() - 0.5) * 13, -3 - r() * 3);
+      setC(ai, i, '#ffffff', 0);
     }
     F.push(ai);
   }
@@ -1658,7 +1712,9 @@ function pinTargets(sc) {
   sc.t = {
     zoom: q('[data-zoom]'),
     fans: [q('[data-fan="1"]'), q('[data-fan="2"]'), q('[data-fan="3"]')],
-    aiCard: q('[data-ai-card]'), aiAns: q('[data-ai-ans]'), aiFoot: q('[data-ai-foot]'),
+    aiH: q('[data-ai-h]'), aiP: q('[data-ai-p]'), aiCards: qa('[data-ai-card]'),
+    aiQs: qa('[data-ai-q]'), aiTypings: qa('[data-ai-typing]'),
+    aiRs: qa('[data-ai-r]'), aiFoots: qa('[data-ai-foot]'),
     stH: q('[data-st-h]'), stP: q('[data-st-p]'), pops: qa('[data-pop]'), stWrap: q('.wrap'),
     skillCards: qa('.skill-card'),
     vH: q('[data-v-h]'), vLabels: qa('.view-label'),
@@ -1881,7 +1937,11 @@ function runPin(sc, p) {
   }
   if (sc.pin === 'state' && T.stH) {
     const q = ease(clamp(p / 0.35));
-    if (T.stWrap) T.stWrap.style.transform = `translate(${STATE_TEXT.x}px, ${STATE_TEXT.y}px) scale(${STATE_TEXT.z})`;
+    /* on exit (p ≥ start) the whole headline block ZOOMS OUT (shrinks) as the
+       kids slide off — it recedes while the stage cross-fades away */
+    const exit = ease(clamp((p - ONTRACK_EXIT.start) / (1 - ONTRACK_EXIT.start)));
+    const zoom = lerp(1, ONTRACK_EXIT.textZoom, exit);
+    if (T.stWrap) T.stWrap.style.transform = `translate(${STATE_TEXT.x}px, ${STATE_TEXT.y}px) scale(${STATE_TEXT.z * zoom})`;
     T.stH.style.transform = `scale(${0.9 + 0.1 * q})`;
     T.stH.style.opacity = String(0.15 + 0.85 * q);
     T.stP.style.opacity = String(clamp((p - 0.14) / 0.2));
@@ -1892,13 +1952,50 @@ function runPin(sc, p) {
     });
     return;
   }
-  if (sc.pin === 'ai' && T.aiCard) {
-    const q1 = ease(clamp(p / 0.4));
-    T.aiCard.style.opacity = String(0.1 + 0.9 * q1);
-    T.aiCard.style.transform = `scale(${0.96 + 0.04 * q1})`;
-    const q2 = clamp((p - 0.45) / 0.25);
-    T.aiAns.style.opacity = String(q2);
-    T.aiFoot.style.opacity = String(0.15 + 0.85 * clamp((p - 0.7) / 0.2));
+  if (sc.pin === 'ai' && T.aiH) {
+    /* 1 · the headline ZOOMS IN (scales up from small) and fades on */
+    const qh = ease(clamp(p / ASK.headIn));
+    T.aiH.style.opacity = String(qh);
+    T.aiH.style.transform = `scale(${lerp(ASK.headFrom, 1, qh)})`;
+    /* 2 · the sub-line follows right behind it */
+    if (T.aiP) T.aiP.style.opacity = String(clamp((p - ASK.headIn) / 0.08));
+    /* 3 · once the headline has landed, BOTH chat boxes rise in together */
+    const qc = ease(clamp((p - ASK.cardsAt) / 0.12));
+    T.aiCards.forEach((c) => {
+      c.style.opacity = String(qc);
+      c.style.transform = `translateY(${(1 - qc) * 22}px) scale(${lerp(0.97, 1, qc)})`;
+    });
+    /* 4 · CHAT — plays on a real-time clock (NOT the scroll) that starts the
+       moment the boxes are fully stable. Scrolling back before they settle
+       rearms it, so the sequence always replays from the top. The clock is
+       shared with the dot-flow in step() via askChat. */
+    const stable = qc > 0.999;
+    if (!stable) sc._chatT = 0;
+    else if (!sc._chatT) sc._chatT = performance.now();
+    const ms = sc._chatT ? performance.now() - sc._chatT : -1;
+    askChat.ms = ms;
+    /* pop a bubble IN with a WhatsApp-style scale/fade once `at` ms have passed;
+       display:none until then so it takes no space and the box stays clean. */
+    const pop = (el, at, disp) => {
+      if (!el) return;
+      if (ms < at) { el.style.display = 'none'; return; }
+      el.style.display = disp;
+      const t = clamp((ms - at) / ASK.pop);
+      el.style.opacity = String(clamp(t / 0.55));
+      el.style.transform = `scale(${lerp(0.55, 1, easeOutBack(t))})`;
+    };
+    T.aiCards.forEach((_, i) => {
+      const base = i * ASK.stagger;                 // the second box lags slightly
+      const tPrompt = base + ASK.promptAt;
+      /* the dots begin streaming flowGap after the prompt; the response pops the
+         instant the FIRST dot reaches the box — i.e. one full path-traverse
+         (1/speed sec) later. Same numbers the flow block uses, so they agree. */
+      const spd = i === 0 ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
+      const tResp = tPrompt + ASK.flowGap + (spd > 0 ? 1000 / spd : 0);
+      pop(T.aiQs[i], tPrompt, 'block');             // prompt bubble
+      pop(T.aiRs[i], tResp, 'block');               // the answer (on dot arrival)
+      if (T.aiFoots[i]) T.aiFoots[i].style.opacity = String(clamp((ms - (tResp + ASK.pop)) / 260));
+    });
     return;
   }
   if (sc.pin === 'dna' && T.stageTitles.length) {
@@ -1943,6 +2040,62 @@ function pathsText() {
 function collectArcsText() {
   const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
   return `red:  ${f(COLLECT_ARC.red)},\nblue: ${f(COLLECT_ARC.blue)},`;
+}
+function askFlowText() {
+  const f = (a) => '[' + a.map((p) => `[${p[0].toFixed(3)}, ${p[1].toFixed(3)}]`).join(', ') + ']';
+  return `gray: '${ASK_FLOW.gray}',\n` +
+    `red:  { pts: ${f(ASK_FLOW.red.pts)}, speed: ${ASK_FLOW.red.speed} },\n` +
+    `blue: { pts: ${f(ASK_FLOW.blue.pts)}, speed: ${ASK_FLOW.blue.speed} },`;
+}
+/* Live drag-editor for the two ASK_FLOW arcs — an SVG overlay with draggable
+   handles at each control point (fractions). Toggled from the GUI; the flow
+   block reads ASK_FLOW every frame, so the stream reshapes as you drag. */
+function buildAskPathEditor() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+  svg.style.cssText = 'position:fixed;inset:0;z-index:99998;display:none;';
+  const stroke = { red: '#e0483a', blue: '#2b6fe0' };
+  const paths = {}, handles = {};
+  ['red', 'blue'].forEach((side) => {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('fill', 'none'); path.setAttribute('stroke', stroke[side]);
+    path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-dasharray', '6 5');
+    svg.appendChild(path); paths[side] = path;
+    handles[side] = ASK_FLOW[side].pts.map((_, i) => {
+      const c = document.createElementNS(NS, 'circle');
+      const anchor = i === 0 || i === 3;
+      c.setAttribute('r', anchor ? 9 : 6);
+      c.setAttribute('fill', anchor ? stroke[side] : '#fff');
+      c.setAttribute('stroke', stroke[side]); c.setAttribute('stroke-width', '2.5');
+      c.style.cssText = 'cursor:grab;';
+      c.dataset.side = side; c.dataset.i = i;
+      svg.appendChild(c); return c;
+    });
+  });
+  const redraw = () => {
+    ['red', 'blue'].forEach((side) => {
+      const q = ASK_FLOW[side].pts.map((p) => [p[0] * window.innerWidth, p[1] * window.innerHeight]);
+      paths[side].setAttribute('d', `M${q[0][0]},${q[0][1]} C${q[1][0]},${q[1][1]} ${q[2][0]},${q[2][1]} ${q[3][0]},${q[3][1]}`);
+      handles[side].forEach((c, i) => { c.setAttribute('cx', q[i][0]); c.setAttribute('cy', q[i][1]); });
+    });
+  };
+  let drag = null;
+  svg.addEventListener('pointerdown', (e) => {
+    if (!e.target.dataset.side) return;
+    drag = { side: e.target.dataset.side, i: +e.target.dataset.i };
+    e.target.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    ASK_FLOW[drag.side].pts[drag.i] = [clamp(e.clientX / window.innerWidth, -0.25, 1.25), clamp(e.clientY / window.innerHeight, -0.25, 1.25)];
+    redraw();
+  });
+  svg.addEventListener('pointerup', () => { drag = null; });
+  window.addEventListener('resize', redraw);
+  document.body.appendChild(svg);
+  redraw();
+  return { toggle: (on) => { svg.style.display = on ? 'block' : 'none'; if (on) redraw(); } };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2055,6 +2208,9 @@ if (reduced) {
        scene (tt = 0 holds the mini-helix) — the dedicated handover block below
        owns the whole choreography: DNA eases out right, kids walk in from left. */
     if (si === ST['12 skills']) tt = 0;
+    /* ON TRACK → ASK-TILLI: base-morph off too — the kids don't melt into the
+       AI formation, they slide straight off the sides (ONTRACK_EXIT block). */
+    if (si === ST['On track']) tt = 0;
     /* dot size tracks the position morph exactly: only the 12-skills form
        carries the shrunken dotScale, so the dots scale down in lock-step with
        the geometry as Measure→12-skills and grow back on the way out. */
@@ -2307,10 +2463,10 @@ if (reduced) {
         const wlk = smoother(th.kidWalk);                // eased 0→1 arrival
         const lx = WALK.slideL * (1 - wlk);              // remaining leftward offset → 0 at rest
         const colIn = smooth(clamp(th.kidWalk / 0.1));   // colour up from white as they enter
-        /* the bob keeps hopping through the walk AND the whole On-track hold —
-           it only eases off in the last stretch before the kids morph away, so
-           there's no jump when the base-morph takes the field back. */
-        const bobEnv = smooth(clamp((fEnd - f) / 0.18));
+        /* the bob keeps hopping through the walk AND the whole On-track hold,
+           at full strength right up to the exit — the straight exit below then
+           carries the same bob and fades it out as the kids slide off. */
+        const bobEnv = 1;
         for (let n = 0; n < N; n++) {
           const k = n * 3;
           /* |sin| — a HOP: rises off the baseline and returns to it each step
@@ -2326,6 +2482,50 @@ if (reduced) {
         }
       } else if (f < f0) {
         th.kidWalk = 0;                                  // rearm when scrolled back before the walk
+      }
+    }
+
+    /* ON-TRACK EXIT → ASK-TILLI: once the kids have held (S.p ≥ start), they
+       leave in a STRAIGHT horizontal line — the 3 left kids off-left, the 3
+       right kids off-right — over the first half of the tail, whitening away.
+       The Ask-Tilli formation then fades in from white over the back half, so
+       the position jump at the crossover is invisible (both ends pure white). */
+    if (si === ST['On track'] && S.p >= ONTRACK_EXIT.start) {
+      const onI = ST['On track'], aiI = onI + 1;
+      const hb = clamp((S.p - ONTRACK_EXIT.start) / (1 - ONTRACK_EXIT.start));   // 0→1 across the tail
+      if (hb <= 0.5) {
+        /* PHASE 1 — kids slide straight out to their side; hold colour, then whiten */
+        const move = smoother(clamp(hb / 0.5));
+        const col  = smoother(clamp((hb - ONTRACK_EXIT.holdCol * 0.5) / (0.5 - ONTRACK_EXIT.holdCol * 0.5)));
+        const kids = th.F[onI];
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          const dir = (n % KID.count) < KID.count / 2 ? -1 : 1;   // kids 0,1,2 left · 3,4,5 right
+          /* carry the walk-in bob in (full at move=0, so it's seamless with the
+             hold) and fade it out as they slide away — same |sin| hop as WALK */
+          const bob = Math.abs(Math.sin(time * WALK.bobFreq + (n % KID.count) * 1.1)) * WALK.bob * (1 - move);
+          P[k]     = kids.pos[k] + dir * ONTRACK_EXIT.dist * move;
+          P[k + 1] = kids.pos[k + 1] + bob;
+          P[k + 2] = kids.pos[k + 2];
+          CL[k]     = lerp(kids.col[k], 1, col);
+          CL[k + 1] = lerp(kids.col[k + 1], 1, col);
+          CL[k + 2] = lerp(kids.col[k + 2], 1, col);
+        }
+        th.dotMat.size = KID.dot;
+      } else {
+        /* PHASE 2 — the Ask-Tilli formation fades in from white at its rest spots */
+        const inP = smoother(clamp((hb - 0.5) / 0.5));
+        const ai = th.F[aiI];
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          P[k]     = ai.pos[k];
+          P[k + 1] = ai.pos[k + 1];
+          P[k + 2] = ai.pos[k + 2];
+          CL[k]     = lerp(1, ai.col[k], inP);
+          CL[k + 1] = lerp(1, ai.col[k + 1], inP);
+          CL[k + 2] = lerp(1, ai.col[k + 2], inP);
+        }
+        th.dotMat.size = lerp(KID.dot, BASE_DOT_SIZE, inP);
       }
     }
 
@@ -2426,6 +2626,56 @@ if (reduced) {
       }
     }
 
+    /* ASK-TILLI CARD IN-FLOW: the field is held WHITE (invisible) through this
+       scene; the dots you see are GENERATED here and streamed into the boxes.
+       Each box's stream begins flowGap after its prompt (askChat clock, shared
+       with runPin) and emits dots FROM THE PATH START — a dot is "born" only
+       once the flow front passes its phase, so the stream builds from the start
+       and flows like water to the box. Grey dots (even) ride the red path into
+       the generic box; the colourful dots (odd) ride the blue path into the
+       Ask-Tilli box. `own` releases into the Impact morph at the scene tail. */
+    if (si === ST['Ask-Tilli']) {
+      const own = 1 - smooth(clamp((S.p - (MORPH_AT - 0.03)) / 0.09));
+      if (own > 0.001) {
+        const AZ = ASK_FLOW.z, W = ASK_FLOW.width, ms = askChat.ms;
+        const rW = ASK_FLOW.red.pts.map((p) => screenFracToWorld(p[0], p[1], AZ));
+        const bW = ASK_FLOW.blue.pts.map((p) => screenFracToWorld(p[0], p[1], AZ));
+        const white = th._white || (th._white = new THREE.Color('#ffffff'));
+        const grey = th._askGrey || (th._askGrey = new THREE.Color());
+        grey.set(ASK_FLOW.gray).lerp(white, 0.06);
+        const pal = th._askPal || (th._askPal = [C.cyan, C.green, C.yellow].map((h) => new THREE.Color(h).lerp(white, 0.05)));
+        const start0 = ASK.promptAt + ASK.flowGap;                  // grey box flow start (ms)
+        const start1 = ASK.stagger + ASK.promptAt + ASK.flowGap;    // colour box flow start
+        for (let n = 0; n < N; n++) {
+          const k = n * 3;
+          const isGrey = n % 2 === 0;
+          const arc = isGrey ? rW : bW;
+          const spd = isGrey ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
+          const fst = isGrey ? start0 : start1;
+          const prog = ms < 0 ? -1 : (ms - fst) / 1000 * spd;   // 0 at flow start, 1 when the front hits the box
+          const c = prog - askPh[n];
+          let tx, ty, tz, show;
+          if (c >= 0) {
+            const t = c % 1;                                     // 0 = path start, 1 = box
+            tx = bez3(arc[0][0], arc[1][0], arc[2][0], arc[3][0], t) + askJx[n] * W;
+            ty = bez3(arc[0][1], arc[1][1], arc[2][1], arc[3][1], t) + askJy[n] * W;
+            tz = AZ + askJz[n] * 1.2;
+            show = Math.min(smooth(clamp(t / 0.07)), 1 - smooth(clamp((t - 0.82) / 0.18)));   // fade in off-frame, out into the box
+          } else {
+            tx = arc[0][0]; ty = arc[0][1]; tz = AZ;             // un-born: parked (invisible) at the path start
+            show = 0;
+          }
+          P[k]     = lerp(P[k], tx, own);
+          P[k + 1] = lerp(P[k + 1], ty, own);
+          P[k + 2] = lerp(P[k + 2], tz, own);
+          const col = isGrey ? grey : pal[(n >> 1) % 3];
+          CL[k]     = lerp(CL[k], lerp(1, col.r, show), own);
+          CL[k + 1] = lerp(CL[k + 1], lerp(1, col.g, show), own);
+          CL[k + 2] = lerp(CL[k + 2], lerp(1, col.b, show), own);
+        }
+      }
+    }
+
     /* idle breathing + anchor to the camera's plane */
     for (let k = 0; k < N * 3; k += 3) {
       P[k] += Math.sin(time * 0.5 + PH[k]) * 0.12;
@@ -2466,6 +2716,7 @@ if (reduced) {
   window.__tilliNet = () => ({ cfg: HERO_CFG, net: heroNet, manual: three ? three.getManual() : [] });
   window.__tilliPaths = () => ({ paths: DASH_PATHS, text: pathsText() });
   window.__tilliCollectArcs = () => ({ arcs: COLLECT_ARC, text: collectArcsText() });
+  window.__tilliAskFlow = () => ({ flow: ASK_FLOW, text: askFlowText() });
   window.__tilliViewsHands = () => VIEWS_HANDS;
   window.__tilliViewsHead = () => VIEWS_HEAD;
   window.__tilliDrain = () => drainAmt;
@@ -2487,6 +2738,13 @@ function buildTuneGUI(getThree) {
     ['Walk distance',  WALK,        'slideL',  10,  80, 1],
     ['DNA exit start', SKILLS_EXIT, 'start',   0.3, 0.9, 0.01],
     ['DNA exit dist',  SKILLS_EXIT, 'slideR',  10,  50, 1],
+    ['Kids exit dist', ONTRACK_EXIT,'dist',    10,  70, 1],
+    ['On-track zoom',  ONTRACK_EXIT,'textZoom',0.2, 1,  0.05],
+    ['Chat stagger',   ASK,         'stagger',   0, 800, 20],
+    ['Prompt delay',   ASK,         'promptAt',  0, 1500, 50],
+    ['Flow gap',       ASK,         'flowGap',   0, 2000, 50],
+    ['Grey flow speed',ASK_FLOW.red, 'speed',  0.2, 2.5, 0.05],
+    ['Colour flow spd',ASK_FLOW.blue,'speed',  0.2, 2.5, 0.05],
   ];
   const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
   const panel = document.createElement('div');
@@ -2521,6 +2779,20 @@ function buildTuneGUI(getThree) {
     panel.appendChild(row);
   });
 
+  /* grey-dot colour picker */
+  const crow = document.createElement('label');
+  crow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;';
+  const ccap = document.createElement('span'); ccap.textContent = 'Grey dot colour';
+  const cin = document.createElement('input');
+  cin.type = 'color'; cin.value = ASK_FLOW.gray;
+  cin.style.cssText = 'width:44px;height:22px;padding:0;border:none;background:none;cursor:pointer;';
+  cin.oninput = () => { ASK_FLOW.gray = cin.value; };
+  crow.append(ccap, cin);
+  panel.appendChild(crow);
+
+  const editor = buildAskPathEditor();
+  let editing = false;
+
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;gap:6px;margin-top:9px;';
   const mkBtn = (txt, fn) => {
@@ -2533,11 +2805,21 @@ function buildTuneGUI(getThree) {
     b.onclick = fn;
     return b;
   };
+  const editBtn = mkBtn('✎ Edit ask paths', () => {
+    editing = !editing;
+    editor.toggle(editing);
+    editBtn.style.background = editing ? 'rgba(120,190,255,.32)' : 'rgba(255,255,255,.09)';
+  });
+  editBtn.onmouseleave = () => (editBtn.style.background = editing ? 'rgba(120,190,255,.32)' : 'rgba(255,255,255,.09)');
   bar.append(
     mkBtn('▶ Replay', () => { const t = getThree && getThree(); if (t) t.kidWalk = 0; }),
-    mkBtn('Log', () => console.log('WALK', { ...WALK }, 'SKILLS_EXIT', { ...SKILLS_EXIT })),
+    mkBtn('Log', () => console.log('WALK', { ...WALK }, 'SKILLS_EXIT', { ...SKILLS_EXIT }, 'ONTRACK_EXIT', { ...ONTRACK_EXIT }, 'ASK', { ...ASK }, '\nASK_FLOW\n' + askFlowText())),
   );
   panel.appendChild(bar);
+  const bar2 = document.createElement('div');
+  bar2.style.cssText = 'display:flex;gap:6px;margin-top:6px;';
+  bar2.append(editBtn);
+  panel.appendChild(bar2);
   document.body.appendChild(panel);
 
   window.addEventListener('keydown', (e) => {
