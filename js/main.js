@@ -392,11 +392,6 @@ const askChat = { ms: -1, locked: true };
 const ASK_CARRY = {
   z: -3, cloud: 2.7, lag: 5.5, spin: 0.7, plugRadius: 260, plugSpeed: 2.4,
 };
-/* carry state — carryP persists between frames so the cloud trails the
-   cursor; askPlugged latches once the dots reach the socket (re-armed when
-   the swarm leaves the Ask-live envelope). */
-const carryP = new Float32Array(N * 3);
-let askCarrySeeded = false, askPlugged = false, askPlugP = 0;
 /* live cursor, in both pixels (socket proximity) and screen-frac (world). */
 const POINTER = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.4, fx: 0.5, fy: 0.4, seen: false };
 window.addEventListener('pointermove', (e) => {
@@ -2793,11 +2788,17 @@ if (reduced) {
        and flows like water to the box. Grey dots (even) ride the red path into
        the generic box; the colourful dots (odd) ride the blue path into the
        Ask-Tilli box. `own` releases into the Impact morph at the scene tail. */
-    if (si === ST['Ask-Tilli']) {
+    if (si === ST['Ask-Tilli'] || si === ST['Ask-live']) {
+      /* The colourful stream keeps flowing on BOTH the Ask-Tilli scene and the
+         following Ask-live ("Now you try") scene — same clock (askChat.ms keeps
+         advancing), so it never freezes. On Ask-live only the colourful stream
+         survives: the grey (generic-box) dots are fully released and the whole
+         background field is banished off-screen so nothing shows behind it. */
+      const onLive = si === ST['Ask-live'];
       /* on scroll-past only the GREY (generic-box) dots release back to the
          base morph and disappear; the COLOURFUL dots stay fully held on their
          path so they carry straight into the Ask-live cursor swarm. */
-      const greyOwn = 1 - smooth(clamp((S.p - (MORPH_AT - 0.03)) / 0.09));
+      const greyOwn = onLive ? 0 : 1 - smooth(clamp((S.p - (MORPH_AT - 0.03)) / 0.09));
       {
         const AZ = ASK_FLOW.z, W = ASK_FLOW.width, ms = askChat.ms;
         const rW = ASK_FLOW.red.pts.map((p) => screenFracToWorld(p[0], p[1], AZ));
@@ -2814,7 +2815,7 @@ if (reduced) {
            chat's rest point, so the stream keeps flowing but now pours at the
            cursor instead of the box. `attach` 0→1 over that scroll; off on
            touch (no pointer). The grey path is never attached. */
-        const attach = POINTER.seen ? smooth(clamp((S.p - REST) / 0.22)) : 0;
+        const attach = POINTER.seen ? (onLive ? 1 : smooth(clamp((S.p - REST) / 0.22))) : 0;
         let bWc = bW;
         if (attach > 0.001) {
           const cur = screenFracToWorld(POINTER.fx, POINTER.fy, AZ);
@@ -2827,7 +2828,14 @@ if (reduced) {
           const k = n * 3;
           const isGrey = n % 2 === 0;
           const own = isGrey ? greyOwn : 1;   // colourful dots never release here
-          if (own <= 0.001) continue;         // grey dot fully gone → leave it to the base morph
+          if (own <= 0.001) {
+            /* on Ask-live the released (grey) dots are the leftover background
+               confetti — white ≠ invisible on this wash, so park them far
+               off-screen; on Ask-Tilli (white wash) just leave them to the
+               base morph, where they read as invisible. */
+            if (onLive) P[k] = 1e5;
+            continue;
+          }
           const arc = isGrey ? rW : bWc;
           const spd = isGrey ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
           const fst = isGrey ? start0 : start1;
@@ -2859,32 +2867,16 @@ if (reduced) {
       }
     }
 
-    /* ASK-LIVE — the colourful "Any-AI" stream keeps flowing untouched to the
-       section boundary, then freezes in place and fades out. No cursor swarm,
-       no socket plug, no re-forming. */
+    /* ASK-LIVE — the colourful stream keeps FLOWING across this whole scene
+       (drawn by the flow block above, extended to run here with attach=1 so
+       its tail stays pinned to the cursor). The field is held at full opacity
+       so the stream reads, and fades out only over the last slice as we head
+       into Impact — where the re-formed field fades back in. No freeze, no
+       cursor swarm, no re-forming. */
     if (ST['Ask-live'] != null) {
-      /* NO field anywhere on the Ask-live chat screen — colouring dots white
-         isn't enough (white ≠ invisible on this wash), so fade the point
-         material fully out the instant the scene is entered and keep it out for
-         the WHOLE section. It fades back IN only on the following Impact screen
-         (by then the base morph has re-formed the dots), never on the chat. */
-      if (si === ST['Ask-live'])    th.dotMat.opacity = DOT_OPACITY * (1 - smooth(clamp(S.p / 0.06)));
+      if (si === ST['Ask-live'])    th.dotMat.opacity = DOT_OPACITY * (1 - smooth(clamp((S.p - 0.82) / 0.16)));
       else if (si === ST['Impact']) th.dotMat.opacity = DOT_OPACITY * smooth(clamp(S.p / 0.12));
       else                          th.dotMat.opacity = DOT_OPACITY;
-      /* The colourful stream is left ENTIRELY to the Ask-Tilli flow block right
-         up to the section boundary — no second owner, so it keeps flowing
-         exactly as it does mid-scene (this is what killed the glitch). While
-         Ask-Tilli is on we only REMEMBER where the dots are; the instant we
-         cross onto Ask-live we freeze them at that last streamed position and
-         let the opacity fade above clear them. Nothing re-forms or swirls. */
-      if (si === ST['Ask-Tilli']) {
-        for (let n = 1; n < N; n += 2) { const k = n * 3; carryP[k] = P[k]; carryP[k + 1] = P[k + 1]; carryP[k + 2] = P[k + 2]; }
-        askCarrySeeded = true;
-      } else if (si === ST['Ask-live']) {
-        if (askCarrySeeded) for (let n = 1; n < N; n += 2) { const k = n * 3; P[k] = carryP[k]; P[k + 1] = carryP[k + 1]; P[k + 2] = carryP[k + 2]; }
-      } else if (askCarrySeeded) {
-        askCarrySeeded = false;
-      }
     }
 
     /* DEBUG — refresh the blue-path overlay (Bézier curve + control polygon +
