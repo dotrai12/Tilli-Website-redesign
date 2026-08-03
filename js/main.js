@@ -315,6 +315,7 @@ const DNA_DEPTH_CENTER = -3;         // z the helix twists around (its rotate2D 
 const DNA_DEPTH_HALF   = 3.6;        // z half-span used to normalise near↔far (≈ helix radius)
 const DNA_DEPTH_WASH   = 0.6;        // how far the FARTHEST dots fade into the backdrop (0..1)
 const BASE_DOT_SIZE    = 1.2;        // the field's default point size (world units)
+const DOT_OPACITY      = 0.9;        // the field's default master opacity (faded out on the Ask-live screen)
 /* MINI DNA — the helix as it sits on the "Get a 360° view" (12-skills) screen.
    x/y/z place it, scale sets its overall size (height + radius, kept in
    proportion), dotScale shrinks the dots to match so it reads as a true
@@ -347,24 +348,94 @@ const WALK = { speed: 0.20, bob: 1.00, bobFreq: 2.5, slideL: 44 };
    textZoom scale the On-track headline shrinks to as it zooms out on exit */
 const ONTRACK_EXIT = { start: MORPH_AT, dist: 34, holdCol: 0.5, textZoom: 0.55 };
 /* ASK-TILLI reveal choreography.
-   headFrom/headIn/cardsAt are the scene's own scroll progress p (0..1) — they
-   drive the headline zoom-in and the two boxes rising in. Everything after is a
-   real-time (ms) chat that plays on its OWN clock, started the instant the boxes
-   are stable (NOT tied to scroll), so the bubbles pop in like a live chat.
+   The WHOLE sequence is now time-based (NOT scrubbed by scroll). A single
+   clock starts the instant the scene is entered — i.e. the moment the "Any AI
+   can…" headline appears — and every beat below fires off that one clock, so
+   the section auto-plays like a live chat regardless of scroll speed. All
+   values are ms FROM ENTRY (except headFrom, a scale, and the *Dur spans).
+   The scroll is HELD on this scene and cannot be released until the response
+   bubbles have landed (askChat.locked, honoured by feedHold) — so the viewer
+   always watches the full exchange before moving on.
    headFrom   scale the "Any AI can…" headline zooms IN from (1 = no zoom)
-   headIn     p by which the headline has fully zoomed in
-   cardsAt    p where the two chat boxes rise in (after the headline lands)
-   stagger    ms the second box's chat lags the first (the "slight stagger")
-   promptAt   ms after the boxes settle before the prompt bubble pops in
-   flowGap    ms after the prompt before the dots START streaming down the path
+   headDur    ms the headline takes to zoom in
+   subAt      ms the sub-line fades in
+   cardsAt    ms both chat boxes begin rising in (after the headline lands)
+   cardsDur   ms the boxes take to rise + settle
+   promptAt   ms the prompt bubble pops in (boxes are settled by now)
+   stagger    ms the second (Ask-Tilli) box lags the first (the "slight stagger")
+   flowGap    ms after a prompt before that box's dots START streaming
    pop        ms each bubble takes to scale in
-   (the response bubble is NOT timed here — it pops the instant the first
-    streamed dot reaches the end of its path; travel time = 1 / ASK_FLOW.speed) */
-const ASK = { headFrom: 0.72, headIn: 0.13, cardsAt: 0.30,
-  stagger: 60, promptAt: 250, flowGap: 750, pop: 300 };
-/* the chat clock (ms since the boxes stabilised) is owned by runPin('ai') and
-   shared with the dot-flow block in step() so both play off one timeline. */
-const askChat = { ms: -1 };
+   (the response bubble is NOT timed directly — it pops the instant the first
+    streamed dot reaches the box: flowGap + one path-traverse (1/speed s) after
+    the prompt. A typing bubble fills the gap between prompt and response.) */
+const ASK = { headFrom: 0.72, headDur: 600, subAt: 480,
+  cardsAt: 860, cardsDur: 520, promptAt: 1620,
+  stagger: 90, flowGap: 520, pop: 300 };
+/* the chat clock (ms since the scene was entered) is owned by runPin('ai') and
+   shared with the dot-flow block in step() so both play off one timeline.
+   `locked` stays true until the response lands — feedHold absorbs scroll input
+   against the Ask-Tilli hold while it's set, so you can't scroll past early. */
+const askChat = { ms: -1, locked: true };
+/* ── ASK-LIVE cursor-carry + plug ─────────────────────────────────────
+   Leaving the "Any AI can…" screen, the colourful dots detach from Dhruv's
+   chat and CARRY on the cursor as a loose swirling cloud (carryP trails the
+   pointer between frames → a comet tail). On the "Ask Tilli anything…"
+   screen a socket is highlighted at the chat input; once the cursor gets
+   near the input the dots stream in and are absorbed ("plugged"). Live from
+   the Ask-live GUI (buildAskLiveGUI); `window.__tilliCarry` dumps values.
+     z          world plane the swarm rides
+     cloud      radius of the cloud around the cursor (world units)
+     lag        how fast the cloud chases the cursor (higher = tighter trail)
+     spin       swirl speed of the cloud (rad / second)
+     plugRadius px: cursor within this of the input box → dots plug in
+     plugSpeed  how fast the swarm streams into the socket once plugging */
+const ASK_CARRY = {
+  z: -3, cloud: 2.7, lag: 5.5, spin: 0.7, plugRadius: 260, plugSpeed: 2.4,
+};
+/* carry state — carryP persists between frames so the cloud trails the
+   cursor; askPlugged latches once the dots reach the socket (re-armed when
+   the swarm leaves the Ask-live envelope). */
+const carryP = new Float32Array(N * 3);
+let askCarrySeeded = false, askPlugged = false, askPlugP = 0;
+/* live cursor, in both pixels (socket proximity) and screen-frac (world). */
+const POINTER = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.4, fx: 0.5, fy: 0.4, seen: false };
+window.addEventListener('pointermove', (e) => {
+  POINTER.x = e.clientX; POINTER.y = e.clientY;
+  POINTER.fx = e.clientX / window.innerWidth;
+  POINTER.fy = e.clientY / window.innerHeight;
+  POINTER.seen = true;
+}, { passive: true });
+
+/* the input-socket DOM + input-bar, resolved once and reused. */
+let _askSocketEl = null, _askBarEl = null, _askArmed = null, _askPlug = null;
+function askEls() {
+  if (!_askSocketEl) _askSocketEl = document.querySelector('[data-atl-socket]');
+  if (!_askBarEl) _askBarEl = document.querySelector('[data-atl-inputbar]');
+  return _askSocketEl && _askBarEl;
+}
+/* socket centre in world + whether the cursor is close enough to plug. */
+function askSocketWorld() {
+  if (!askEls()) return null;
+  const sr = _askSocketEl.getBoundingClientRect();
+  if (sr.width === 0 && sr.height === 0) return null;      // not laid out yet
+  const fx = (sr.left + sr.width / 2) / window.innerWidth;
+  const fy = (sr.top + sr.height / 2) / window.innerHeight;
+  const w = screenFracToWorld(fx, fy, ASK_CARRY.z);
+  const br = _askBarEl.getBoundingClientRect();             // proximity to the whole bar
+  const dx = Math.max(br.left - POINTER.x, 0, POINTER.x - br.right);
+  const dy = Math.max(br.top - POINTER.y, 0, POINTER.y - br.bottom);
+  const near = POINTER.seen && Math.hypot(dx, dy) < ASK_CARRY.plugRadius;
+  return { wx: w[0], wy: w[1], near };
+}
+/* show the socket while the swarm is live; the socket pulses until it is
+   plugged, then locks solid (`.atl-plugged`). */
+function setAskSocketState(own, plugged) {
+  if (!askEls()) return;
+  const live = own > 0.05;
+  if (_askArmed !== live) { _askBarEl.classList.toggle('atl-live', live); _askArmed = live; }
+  const plug = live && plugged;
+  if (_askPlug !== plug) { _askSocketEl.classList.toggle('atl-plugged', plug); _askPlug = plug; }
+}
 function sphereHero(pos) {
   const r = rng(21);
   const c = ballWorld();
@@ -697,6 +768,10 @@ const COLLECT_ARC = {
    stream's flow rate in PATH-LENGTHS PER SECOND — it also sets how long the dots
    take to reach the box (travel = 1/speed sec), which is when that box's response
    pops. `gray` recolours the grey dots. Bake via the __tilliAskFlow() dump. */
+/* DEBUG: draw the colourful (blue) ask-flow path — the sampled Bézier curve, a
+   faint control-polygon, and a sphere at each of the 4 control points. Flip to
+   false to remove the overlay. Only shows while the Ask-Tilli scene is on. */
+const DEBUG_ASK_PATH = true;
 const ASK_FLOW = {
   gray: '#c3c9d4',   // colour of the grey (generic-box) dots
   z: -3,             // world plane the streams flow on
@@ -1113,9 +1188,36 @@ function initThree() {
      it — without this the field draws in buffer order and far dots paint
      over near ones (the orb looked inside-out). The sprite is a near-solid
      disc, so alphaTest clips only the feathered rim and edges stay clean. */
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: BASE_DOT_SIZE, map: tex, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: true, depthTest: true, alphaTest: 0.5 }));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: BASE_DOT_SIZE, map: tex, vertexColors: true, transparent: true, opacity: DOT_OPACITY, depthWrite: true, depthTest: true, alphaTest: 0.5 }));
   pts.frustumCulled = false;
   scene3.add(pts);
+
+  /* ── DEBUG overlay for the colourful (blue) ask-flow path. Built once; its
+     world positions are refreshed every frame in step() because ASK_FLOW.blue
+     is stored as screen fractions (so it tracks the viewport / resizes). */
+  let askPathDbg = null;
+  if (DEBUG_ASK_PATH) {
+    const SEG = 48;
+    const curvePos = new Float32Array((SEG + 1) * 3);
+    const curveGeo = new THREE.BufferGeometry();
+    curveGeo.setAttribute('position', new THREE.BufferAttribute(curvePos, 3));
+    const curve = new THREE.Line(curveGeo, new THREE.LineBasicMaterial({ color: 0x0aa2c7, transparent: true, opacity: 0.95, depthTest: false }));
+    const polyPos = new Float32Array(4 * 3);
+    const polyGeo = new THREE.BufferGeometry();
+    polyGeo.setAttribute('position', new THREE.BufferAttribute(polyPos, 3));
+    const poly = new THREE.Line(polyGeo, new THREE.LineBasicMaterial({ color: 0x94a0b4, transparent: true, opacity: 0.5, depthTest: false }));
+    const spheres = [];
+    const sGeo = new THREE.SphereGeometry(0.34, 16, 12);
+    for (let j = 0; j < 4; j++) {   // endpoints red, control handles amber
+      const m = new THREE.Mesh(sGeo, new THREE.MeshBasicMaterial({ color: (j === 0 || j === 3) ? 0xff3b6b : 0xffb020, depthTest: false }));
+      m.frustumCulled = false; m.renderOrder = 1001;
+      scene3.add(m); spheres.push(m);
+    }
+    curve.frustumCulled = poly.frustumCulled = false;
+    curve.renderOrder = poly.renderOrder = 1000;
+    scene3.add(curve); scene3.add(poly);
+    askPathDbg = { curve, curvePos, curveGeo, poly, polyPos, polyGeo, spheres, SEG };
+  }
 
   /* hero connections. WebGL ignores LineBasicMaterial.linewidth on every
      desktop driver, so a real stroke has to be geometry: each link is a
@@ -1433,7 +1535,7 @@ function initThree() {
     links, drawLinks, rebuildHeroNetwork, restitch: refreshLinkDraw,
     isEditing, stepEdit, setEditMode, clearSelection, resetSelection,
     selectionInfo, wiringText, getManual: () => selection.slice(),
-    hands, viewsHands, dotMat: pts.material,
+    hands, viewsHands, dotMat: pts.material, askPathDbg,
     mouse, camZ: CAM_DIST, heroP: 0, dnaP: 0,
   };
 }
@@ -1538,7 +1640,7 @@ let glY0 = 0, glY1 = 0, glT0 = 0, glDur = 0;
 let maxY = 0, prevPosY = 0;
 /* active hold: pinned at holdY; `holdSpent` accumulates signed scroll input
    and the hold releases once |holdSpent| ≥ holdNeed. */
-let holdActive = false, holdY = 0, holdSpent = 0, holdNeed = 0;
+let holdActive = false, holdY = 0, holdSpent = 0, holdNeed = 0, holdLabel = '';
 const held = () => holdActive;
 
 function refreshMaxY() { maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight); }
@@ -1591,6 +1693,7 @@ function advanceScroll(now, dt) {
       if (h.armed && ((prevPosY < hy) !== (ny < hy))) {            // crossed hy this frame
         h.armed = false;
         holdActive = true; holdY = hy; holdSpent = 0; holdNeed = h.dist;
+        holdLabel = sc.label;
         aimY = hy; ny = hy;
         break;
       }
@@ -1630,6 +1733,9 @@ if (!reduced) {
      of moving the page; once |holdSpent| clears it, let go and continue in
      the push direction (nudged just past the hold so it doesn't re-catch) */
   const feedHold = (delta) => {
+    /* the Ask-Tilli hold swallows all scroll input until its chat has played
+       through to the response — you can't skip past the exchange */
+    if (holdLabel === 'Ask-Tilli' && askChat.locked) return;
     holdSpent += delta;
     if (Math.abs(holdSpent) >= holdNeed) {
       const dir = Math.sign(holdSpent) || 1;
@@ -1779,6 +1885,7 @@ function onScroll(fOverride) {
      the crossing screen takes over, and the dashboard climbs in from below
      over the Cross tail. The dots carry the continuity across both. */
   const crossI = ST['Cross'], dashI = ST['Dashboard'], skillsI = ST['12 skills'], onTrackI = skillsI + 1;
+  const aiI = ST['Ask-Tilli'], askLiveI = ST['Ask-live'];
   /* The dots now CROSS PATHS IN FRONT of the hero text. The hero stays
      centred (no ride-up) and simply fades out as the two streams sweep over
      it, while the whole dot field is lifted above the page content for the
@@ -1854,6 +1961,23 @@ function onScroll(fOverride) {
       ty = 1 - repIn;
       const toCollect = smooth(clamp((f - (reportsI + 1 - FADE_LEN)) / FADE_LEN));
       op = smooth(clamp(repIn / 0.08)) * (1 - toCollect);
+    } else if (k === aiI) {
+      /* NORMAL SCROLL out to Ask-live — NO cross-fade on the way out. "Any AI
+         can…" fades in from On-track as usual, holds opaque through its chat,
+         then physically translates UP and out (like a normal page scroll) as
+         the Ask-live screen climbs in from below. */
+      const inFade = smooth(clamp((f - (aiI - FADE_OVER)) / FADE_LEN));
+      const aiOut = smoother(clamp((f - (aiI + 0.58)) / 0.42));
+      ty = -aiOut;
+      op = inFade * (1 - smooth(clamp((aiOut - 0.92) / 0.08)));   // opaque until fully gone
+    } else if (k === askLiveI) {
+      /* "Ask Tilli anything…" SCROLLS IN from below, opaque the whole way —
+         the mirror of the exit above, so the pair reads as a plain scroll. It
+         then cross-fades out to Impact normally at its own tail. */
+      const askIn = smoother(clamp((f - (askLiveI - 0.42)) / 0.42));
+      const askOut = smooth(clamp((f - (askLiveI + 1 - FADE_LEN)) / FADE_LEN));
+      ty = 1 - askIn;
+      op = smooth(clamp(askIn / 0.08)) * (1 - askOut);
     }
     if (sc.stage && (ty !== sc.ty || tx !== sc.tx)) {
       sc.stage.style.transform = (tx || ty)
@@ -1953,49 +2077,79 @@ function runPin(sc, p) {
     return;
   }
   if (sc.pin === 'ai' && T.aiH) {
+    /* ONE clock drives the whole section. It starts the instant the scene is
+       entered (headline appearing) and is armed only inside a scroll window
+       bracketing the hold at REST, so it replays cleanly whether you arrive
+       from above or below. Everything downstream — headline, cards, prompt,
+       typing, dots (step() reads askChat.ms), response — plays off this clock,
+       NOT the scroll. */
+    const TRIG_IN = 0.24, TRIG_OUT = 0.55;          // p-window the sequence PLAYS in
+    const live = p >= TRIG_IN && p <= TRIG_OUT;
+    /* reset (re-arm for replay) only when scrolled back BEFORE the chat — NOT
+       once it has finished. That way the completed boxes scroll away with their
+       content intact instead of blanking out the instant p passes TRIG_OUT. */
+    if (p < TRIG_IN) { sc._chatT = 0; askChat.locked = true; }
+    else if (live && !sc._chatT) sc._chatT = performance.now();
+    const rawMs = sc._chatT ? performance.now() - sc._chatT : -1;
+    /* DOM clock: real time while live, then HELD at the finished frame past
+       TRIG_OUT so the boxes stay fully drawn as they scroll off (1e7 covers
+       arriving from below, where the chat never ran). The dot-flow clock
+       (askChat.ms) tracks the SAME held clock past TRIG_OUT so the streaming
+       dots keep flowing as the section scrolls away instead of vanishing;
+       only BEFORE the chat (p < TRIG_IN) are they parked un-born (-1). */
+    const ms = p > TRIG_OUT ? (sc._chatT ? rawMs : 1e7) : rawMs;
+    askChat.ms = live ? rawMs : (p > TRIG_OUT ? ms : -1);
+    const at = (from, dur) => (ms < 0 ? 0 : ease(clamp((ms - from) / dur)));
     /* 1 · the headline ZOOMS IN (scales up from small) and fades on */
-    const qh = ease(clamp(p / ASK.headIn));
+    const qh = at(0, ASK.headDur);
     T.aiH.style.opacity = String(qh);
     T.aiH.style.transform = `scale(${lerp(ASK.headFrom, 1, qh)})`;
     /* 2 · the sub-line follows right behind it */
-    if (T.aiP) T.aiP.style.opacity = String(clamp((p - ASK.headIn) / 0.08));
+    if (T.aiP) T.aiP.style.opacity = String(at(ASK.subAt, 260));
     /* 3 · once the headline has landed, BOTH chat boxes rise in together */
-    const qc = ease(clamp((p - ASK.cardsAt) / 0.12));
+    const qc = at(ASK.cardsAt, ASK.cardsDur);
     T.aiCards.forEach((c) => {
       c.style.opacity = String(qc);
       c.style.transform = `translateY(${(1 - qc) * 22}px) scale(${lerp(0.97, 1, qc)})`;
     });
-    /* 4 · CHAT — plays on a real-time clock (NOT the scroll) that starts the
-       moment the boxes are fully stable. Scrolling back before they settle
-       rearms it, so the sequence always replays from the top. The clock is
-       shared with the dot-flow in step() via askChat. */
-    const stable = qc > 0.999;
-    if (!stable) sc._chatT = 0;
-    else if (!sc._chatT) sc._chatT = performance.now();
-    const ms = sc._chatT ? performance.now() - sc._chatT : -1;
-    askChat.ms = ms;
-    /* pop a bubble IN with a WhatsApp-style scale/fade once `at` ms have passed;
+    /* pop a bubble IN with a WhatsApp-style scale/fade once `t0` ms have passed;
        display:none until then so it takes no space and the box stays clean. */
-    const pop = (el, at, disp) => {
+    const pop = (el, t0, disp) => {
       if (!el) return;
-      if (ms < at) { el.style.display = 'none'; return; }
+      if (ms < t0) { el.style.display = 'none'; return; }
       el.style.display = disp;
-      const t = clamp((ms - at) / ASK.pop);
+      const t = clamp((ms - t0) / ASK.pop);
       el.style.opacity = String(clamp(t / 0.55));
       el.style.transform = `scale(${lerp(0.55, 1, easeOutBack(t))})`;
     };
+    /* 4 · CHAT. Per box: prompt pops → a typing bubble shows while the dots
+       stream down the path → the response replaces it the instant the first
+       dot arrives. Track the LAST response so we know when to release scroll. */
+    let lastResp = 0;
     T.aiCards.forEach((_, i) => {
-      const base = i * ASK.stagger;                 // the second box lags slightly
-      const tPrompt = base + ASK.promptAt;
+      const tPrompt = ASK.promptAt + i * ASK.stagger;   // the second box lags slightly
       /* the dots begin streaming flowGap after the prompt; the response pops the
          instant the FIRST dot reaches the box — i.e. one full path-traverse
          (1/speed sec) later. Same numbers the flow block uses, so they agree. */
       const spd = i === 0 ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
       const tResp = tPrompt + ASK.flowGap + (spd > 0 ? 1000 / spd : 0);
-      pop(T.aiQs[i], tPrompt, 'block');             // prompt bubble
-      pop(T.aiRs[i], tResp, 'block');               // the answer (on dot arrival)
+      lastResp = Math.max(lastResp, tResp);
+      pop(T.aiQs[i], tPrompt, 'block');                 // prompt bubble
+      /* typing dots live between the prompt landing and the answer arriving */
+      const tp = T.aiTypings[i];
+      if (tp) {
+        const typing = ms >= tPrompt + ASK.pop && ms < tResp;
+        tp.style.display = typing ? 'flex' : 'none';
+        tp.style.opacity = typing ? '1' : '0';
+        tp.style.transform = 'scale(1)';
+      }
+      pop(T.aiRs[i], tResp, 'block');                   // the answer (on dot arrival)
       if (T.aiFoots[i]) T.aiFoots[i].style.opacity = String(clamp((ms - (tResp + ASK.pop)) / 260));
     });
+    /* release the scroll only once the (later) response has fully popped in.
+       Once released, the visitor scrolls DOWN into the interactive "Ask-Tilli
+       live" section themselves — a normal, non-seamless scroll (no auto-glide). */
+    askChat.locked = !(ms >= lastResp + ASK.pop);
     return;
   }
   if (sc.pin === 'dna' && T.stageTitles.length) {
@@ -2211,6 +2365,11 @@ if (reduced) {
     /* ON TRACK → ASK-TILLI: base-morph off too — the kids don't melt into the
        AI formation, they slide straight off the sides (ONTRACK_EXIT block). */
     if (si === ST['On track']) tt = 0;
+    /* ASK-TILLI → ASK-LIVE: base-morph OFF so the field never blends into the
+       confetti scatter — it holds WHITE (the ai form) through the handover,
+       and the ASK-LIVE wave block below fades the sine line in cleanly on top.
+       Keeps the section change a plain scroll with no dot transition. */
+    if (si === ST['Ask-Tilli']) tt = 0;
     /* dot size tracks the position morph exactly: only the 12-skills form
        carries the shrunken dotScale, so the dots scale down in lock-step with
        the geometry as Measure→12-skills and grow back on the way out. */
@@ -2635,8 +2794,11 @@ if (reduced) {
        the generic box; the colourful dots (odd) ride the blue path into the
        Ask-Tilli box. `own` releases into the Impact morph at the scene tail. */
     if (si === ST['Ask-Tilli']) {
-      const own = 1 - smooth(clamp((S.p - (MORPH_AT - 0.03)) / 0.09));
-      if (own > 0.001) {
+      /* on scroll-past only the GREY (generic-box) dots release back to the
+         base morph and disappear; the COLOURFUL dots stay fully held on their
+         path so they carry straight into the Ask-live cursor swarm. */
+      const greyOwn = 1 - smooth(clamp((S.p - (MORPH_AT - 0.03)) / 0.09));
+      {
         const AZ = ASK_FLOW.z, W = ASK_FLOW.width, ms = askChat.ms;
         const rW = ASK_FLOW.red.pts.map((p) => screenFracToWorld(p[0], p[1], AZ));
         const bW = ASK_FLOW.blue.pts.map((p) => screenFracToWorld(p[0], p[1], AZ));
@@ -2649,6 +2811,8 @@ if (reduced) {
         for (let n = 0; n < N; n++) {
           const k = n * 3;
           const isGrey = n % 2 === 0;
+          const own = isGrey ? greyOwn : 1;   // colourful dots never release here
+          if (own <= 0.001) continue;         // grey dot fully gone → leave it to the base morph
           const arc = isGrey ? rW : bW;
           const spd = isGrey ? ASK_FLOW.red.speed : ASK_FLOW.blue.speed;
           const fst = isGrey ? start0 : start1;
@@ -2673,6 +2837,57 @@ if (reduced) {
           CL[k + 1] = lerp(CL[k + 1], lerp(1, col.g, show), own);
           CL[k + 2] = lerp(CL[k + 2], lerp(1, col.b, show), own);
         }
+      }
+    }
+
+    /* ASK-LIVE — the colourful "Any-AI" stream keeps flowing untouched to the
+       section boundary, then freezes in place and fades out. No cursor swarm,
+       no socket plug, no re-forming. */
+    if (ST['Ask-live'] != null) {
+      /* NO field anywhere on the Ask-live chat screen — colouring dots white
+         isn't enough (white ≠ invisible on this wash), so fade the point
+         material fully out the instant the scene is entered and keep it out for
+         the WHOLE section. It fades back IN only on the following Impact screen
+         (by then the base morph has re-formed the dots), never on the chat. */
+      if (si === ST['Ask-live'])    th.dotMat.opacity = DOT_OPACITY * (1 - smooth(clamp(S.p / 0.06)));
+      else if (si === ST['Impact']) th.dotMat.opacity = DOT_OPACITY * smooth(clamp(S.p / 0.12));
+      else                          th.dotMat.opacity = DOT_OPACITY;
+      /* The colourful stream is left ENTIRELY to the Ask-Tilli flow block right
+         up to the section boundary — no second owner, so it keeps flowing
+         exactly as it does mid-scene (this is what killed the glitch). While
+         Ask-Tilli is on we only REMEMBER where the dots are; the instant we
+         cross onto Ask-live we freeze them at that last streamed position and
+         let the opacity fade above clear them. Nothing re-forms or swirls. */
+      if (si === ST['Ask-Tilli']) {
+        for (let n = 1; n < N; n += 2) { const k = n * 3; carryP[k] = P[k]; carryP[k + 1] = P[k + 1]; carryP[k + 2] = P[k + 2]; }
+        askCarrySeeded = true;
+      } else if (si === ST['Ask-live']) {
+        if (askCarrySeeded) for (let n = 1; n < N; n += 2) { const k = n * 3; P[k] = carryP[k]; P[k + 1] = carryP[k + 1]; P[k + 2] = carryP[k + 2]; }
+      } else if (askCarrySeeded) {
+        askCarrySeeded = false;
+      }
+    }
+
+    /* DEBUG — refresh the blue-path overlay (Bézier curve + control polygon +
+       control-point spheres) in world space; only visible while Ask-Tilli is on. */
+    if (th.askPathDbg) {
+      const d = th.askPathDbg, show = si === ST['Ask-Tilli'];
+      d.curve.visible = d.poly.visible = show;
+      d.spheres.forEach((m) => (m.visible = show));
+      if (show) {
+        const cp = ASK_FLOW.blue.pts.map((p) => screenFracToWorld(p[0], p[1], ASK_FLOW.z));
+        for (let s = 0; s <= d.SEG; s++) {
+          const t = s / d.SEG, o = s * 3;
+          d.curvePos[o]     = bez3(cp[0][0], cp[1][0], cp[2][0], cp[3][0], t);
+          d.curvePos[o + 1] = bez3(cp[0][1], cp[1][1], cp[2][1], cp[3][1], t);
+          d.curvePos[o + 2] = ASK_FLOW.z;
+        }
+        for (let j = 0; j < 4; j++) {
+          d.polyPos[j * 3] = cp[j][0]; d.polyPos[j * 3 + 1] = cp[j][1]; d.polyPos[j * 3 + 2] = ASK_FLOW.z;
+          d.spheres[j].position.set(cp[j][0], cp[j][1], cp[j][2]);
+        }
+        d.curveGeo.attributes.position.needsUpdate = true;
+        d.polyGeo.attributes.position.needsUpdate = true;
       }
     }
 
@@ -2720,7 +2935,91 @@ if (reduced) {
   window.__tilliViewsHands = () => VIEWS_HANDS;
   window.__tilliViewsHead = () => VIEWS_HEAD;
   window.__tilliDrain = () => drainAmt;
-  buildTuneGUI(() => three);   // live sliders for the kids walk-in (press G to hide)
+  window.__tilliCarry = () => ({ ...ASK_CARRY });
+  // buildTuneGUI(() => three);   // dev-only tuning panel — disabled for production. Re-enable to re-bake the kids walk-in.
+  buildAskLiveGUI();              // Ask-live carry/plug + prompt-colour controls (toggle with W)
+}
+
+/* ── Ask-live carry/plug + prompt controls ────────────────────────────
+   A small live panel for the "Ask Tilli anything…" screen: sliders for the
+   cursor-carry swarm + socket plug (ASK_CARRY, read every frame by the
+   step() carry block) plus colour pickers for the suggested-prompt chips.
+   Starts visible; press W to hide/show. Chip colours are pushed onto the
+   --atl-chip-* CSS vars so the DOM recolours instantly. */
+function buildAskLiveGUI() {
+  if (document.getElementById('waveGUI')) return;
+  const ROWS = [
+    ['Cloud size',      ASK_CARRY, 'cloud',      0.5, 6,   0.1],
+    ['Trail tightness', ASK_CARRY, 'lag',        1,   14,  0.5],
+    ['Swirl speed',     ASK_CARRY, 'spin',       0,   3,   0.05],
+    ['Plug distance',   ASK_CARRY, 'plugRadius', 60,  600, 10],
+    ['Plug speed',      ASK_CARRY, 'plugSpeed',  0.5, 6,   0.1],
+  ];
+  const fmt = (v, step) => (step < 1 ? v.toFixed(step < 0.01 ? 3 : 2) : v.toFixed(0));
+  const panel = document.createElement('div');
+  panel.id = 'waveGUI';
+  panel.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;width:230px;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;letter-spacing:.02em;';
+  const title = document.createElement('span'); title.textContent = 'Ask-live carry';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press W)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  head.append(title, hide);
+  panel.appendChild(head);
+
+  ROWS.forEach(([label, obj, key, min, max, step]) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:8px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    val.textContent = fmt(obj[key], step);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = obj[key];
+    inp.style.cssText = 'width:100%;margin-top:4px;accent-color:#26BDE2;cursor:pointer;';
+    inp.oninput = () => { obj[key] = parseFloat(inp.value); val.textContent = fmt(obj[key], step); };
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+  });
+
+  /* colour pickers: prompt-chip text / background */
+  const colorRow = (label, get, set) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:9px 0 2px;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'color'; inp.value = get();
+    inp.style.cssText = 'width:44px;height:22px;padding:0;border:none;background:none;cursor:pointer;';
+    inp.oninput = () => set(inp.value);
+    row.append(cap, inp);
+    panel.appendChild(row);
+  };
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--atl-chip-text', '#6b7280');
+  rootStyle.setProperty('--atl-chip-bg', '#eef1f4');
+  colorRow('Prompt text',   () => '#6b7280',      (v) => rootStyle.setProperty('--atl-chip-text', v));
+  colorRow('Prompt bg',     () => '#eef1f4',      (v) => rootStyle.setProperty('--atl-chip-bg', v));
+
+  const logBtn = document.createElement('button');
+  logBtn.textContent = 'Log values';
+  logBtn.style.cssText = 'all:unset;display:block;text-align:center;cursor:pointer;margin-top:9px;padding:6px 0;' +
+    'border-radius:7px;background:rgba(255,255,255,.09);transition:background .15s;';
+  logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
+  logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
+  logBtn.onclick = () => console.log('ASK_CARRY', { ...ASK_CARRY });
+  panel.appendChild(logBtn);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'w' || e.key === 'W') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
 }
 
 /* ── Dev tuning panel ─────────────────────────────────────────────────
