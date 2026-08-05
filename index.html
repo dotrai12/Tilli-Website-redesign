@@ -154,15 +154,42 @@
   .atl-typing { align-self: flex-start; background: var(--tl-surface-100); border-radius: 16px 16px 16px 4px; padding: 13px 15px; display: flex; gap: 4px; align-items: center; animation: atlpop .3s ease both; }
   @keyframes atlpop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
   /* input bar — expands with the text, capped, then scrolls */
-  .atl-inputbar { position: relative; display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--tl-line-200); background: #fff; }
+  .atl-inputbar { position: relative; display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--tl-line-200); background: #fff; transition: background .4s ease; }
+  .atl-inputbar.atl-live { background: rgba(38,189,226,.06); }
+  .atl-inputbar.atl-plugged { background: rgba(86,192,43,.07); }
+  /* DROP-ZONE GLOW — the whole card breathes cyan while the socket is armed to
+     say "snap the flowing dots in here", then locks to a solid green ring the
+     moment the cursor plugs in. (:has keys off the bar's .atl-live/.atl-plugged
+     set by main.js.) */
+  .atl-card:has(.atl-inputbar.atl-live) { border-color: var(--tl-cyan-500); animation: atl-card-glow 1.9s ease-in-out infinite; }
+  .atl-card:has(.atl-inputbar.atl-plugged) { border-color: var(--tl-green-500, #56C02B); animation: none; box-shadow: 0 0 0 3px rgba(86,192,43,.28), 0 12px 34px rgba(86,192,43,.22); }
+  @keyframes atl-card-glow {
+    0%,100% { box-shadow: 0 0 0 1px rgba(38,189,226,.35), 0 10px 30px rgba(15,148,181,0.12); }
+    50%     { box-shadow: 0 0 0 4px rgba(38,189,226,.30), 0 0 30px 4px rgba(38,189,226,.32); }
+  }
+  /* floating guide pill — anchored to the RIGHT, its tail pointing down at the
+     socket that now sits after the send button. */
+  .atl-guide { position: absolute; right: 4px; bottom: calc(100% + 14px); transform: translateY(6px); white-space: nowrap; padding: 7px 15px; border-radius: 999px; background: var(--tl-cyan-700); color: #fff; font-size: 12.5px; font-weight: 700; letter-spacing: .01em; box-shadow: 0 8px 22px rgba(38,189,226,.35); opacity: 0; pointer-events: none; z-index: 6; transition: opacity .4s ease, transform .4s cubic-bezier(.34,1.56,.64,1), background .3s ease; }
+  .atl-guide::after { content: ''; position: absolute; right: 22px; top: 100%; border: 6px solid transparent; border-top-color: var(--tl-cyan-700); transition: border-top-color .3s ease; }
+  .atl-inputbar.atl-live .atl-guide { opacity: 1; transform: translateY(0); animation: atl-guide-bob 1.8s ease-in-out infinite; }
+  @keyframes atl-guide-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  .atl-guide-plug { display: none; }
+  .atl-inputbar.atl-plugged .atl-guide { background: var(--tl-green-500, #56C02B); box-shadow: 0 8px 22px rgba(86,192,43,.4); animation: none; }
+  .atl-inputbar.atl-plugged .atl-guide::after { border-top-color: var(--tl-green-500, #56C02B); }
+  .atl-inputbar.atl-plugged .atl-guide-arm { display: none; }
+  .atl-inputbar.atl-plugged .atl-guide-plug { display: inline; }
+  @media (prefers-reduced-motion: reduce) {
+    .atl-card:has(.atl-inputbar.atl-live), .atl-inputbar.atl-live .atl-guide { animation: none; }
+  }
   .atl-input { flex: 1; border: none; outline: none; resize: none; font-family: inherit; font-size: 15px; line-height: 1.45; color: var(--tl-ink-800); background: transparent; max-height: 120px; overflow-y: auto; padding: 8px 4px; transition: padding-left .35s ease; }
   /* ── plug socket ── the colourful dots streaming off the cursor pour in here.
      Hidden until the swarm is live (.atl-live on the bar); pulses (dashed ring,
      sonar halo, converging chevrons) to say "plug in here", then locks solid
      (.atl-plugged). pointer-events off so it never blocks typing. */
-  .atl-socket { position: absolute; left: 14px; top: 50%; width: 32px; height: 32px; margin-top: -16px; pointer-events: none; opacity: 0; transform: scale(.5); transition: opacity .35s ease, transform .4s cubic-bezier(.34,1.56,.64,1); z-index: 4; }
-  .atl-inputbar.atl-live .atl-socket { opacity: 1; transform: scale(1); }
-  .atl-inputbar.atl-live .atl-input { padding-left: 52px; }
+  /* RIGHT-side snap point: an in-flow flex item after the send button. It
+     collapses to zero width when idle (no layout shift) and expands when live. */
+  .atl-socket { position: relative; align-self: center; flex-shrink: 0; width: 0; height: 32px; margin-left: -8px; pointer-events: none; opacity: 0; transform: scale(.5); transition: opacity .35s ease, transform .4s cubic-bezier(.34,1.56,.64,1), width .35s ease, margin-left .35s ease; z-index: 4; }
+  .atl-inputbar.atl-live .atl-socket { width: 32px; margin-left: 0; opacity: 1; transform: scale(1); }
   .atl-socket-ring { position: absolute; inset: 0; border: 2px dashed var(--tl-cyan-500); border-radius: 50%; animation: atl-sock-spin 7s linear infinite; }
   .atl-socket-ring::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(38,189,226,.45); animation: atl-sock-halo 1.7s ease-out infinite; }
   .atl-socket-arrows { position: absolute; inset: 3px; display: flex; align-items: center; justify-content: space-between; color: var(--tl-cyan-700); }
@@ -509,16 +536,12 @@
             <div class="atl-loghead">ASK-TILLI · SUNRISE ACADEMY</div>
             <div class="atl-log" data-atl-log></div>
             <div class="atl-inputbar" data-atl-inputbar>
-              <!-- plug socket: the colourful dots streaming off the cursor pour
-                   in here. Pulses (dashed ring + inward arrows) until plugged,
-                   then locks solid. Positioned/animated by main.js. -->
-              <span class="atl-socket" data-atl-socket aria-hidden="true">
-                <span class="atl-socket-ring"></span>
-                <span class="atl-socket-arrows">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
-                </span>
-                <span class="atl-socket-core"></span>
+              <!-- floating guide: invites the visitor to bring the flowing dots
+                   into the socket. Shown while the bar is .atl-live, swaps to a
+                   "connected" message once .atl-plugged. -->
+              <span class="atl-guide" data-atl-guide aria-hidden="true">
+                <span class="atl-guide-arm">Bring your cursor here to snap the dots in</span>
+                <span class="atl-guide-plug">Connected — ask Tilli anything</span>
               </span>
               <textarea class="atl-input" data-atl-input rows="1" placeholder="Ask about Sunrise Academy…" aria-label="Ask Tilli a question"></textarea>
               <button class="atl-btn atl-mic" data-atl-mic type="button" aria-label="Speak your question" title="Speak your question" style="display: none;">
@@ -527,6 +550,17 @@
               <button class="atl-btn atl-send" data-atl-send type="button" aria-label="Send question" title="Send" disabled>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>
               </button>
+              <!-- plug socket — the RIGHT-side snap point: the colourful dots
+                   pour in here. Pulses (dashed ring + inward arrows) until the
+                   cursor gets near, then LOCKS solid green. Animated by main.js. -->
+              <span class="atl-socket" data-atl-socket aria-hidden="true">
+                <span class="atl-socket-ring"></span>
+                <span class="atl-socket-arrows">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+                </span>
+                <span class="atl-socket-core"></span>
+              </span>
             </div>
             <div class="atl-meta">
               <span class="atl-count" data-atl-count>2 questions left</span>

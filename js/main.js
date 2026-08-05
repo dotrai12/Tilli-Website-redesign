@@ -402,25 +402,41 @@ window.addEventListener('pointermove', (e) => {
 }, { passive: true });
 
 /* the input-socket DOM + input-bar, resolved once and reused. */
-let _askSocketEl = null, _askBarEl = null, _askArmed = null, _askPlug = null;
+let _askSocketEl = null, _askBarEl = null, _askCardEl = null, _askArmed = null, _askPlug = null;
 function askEls() {
   if (!_askSocketEl) _askSocketEl = document.querySelector('[data-atl-socket]');
   if (!_askBarEl) _askBarEl = document.querySelector('[data-atl-inputbar]');
+  if (!_askCardEl) _askCardEl = document.getElementById('askTilliLive');
   return _askSocketEl && _askBarEl;
 }
-/* socket centre in world + whether the cursor is close enough to plug. */
+/* Snap-point in world + whether the cursor is close enough to plug.
+   Normally that's the socket on the input bar. Once the 2-question demo LOCKS,
+   the input bar (and its socket) is display:none — so we fall back to the card's
+   right edge and flag `locked`, keeping the stream plugged into the card instead
+   of springing back to the cursor. */
 function askSocketWorld() {
   if (!askEls()) return null;
   const sr = _askSocketEl.getBoundingClientRect();
-  if (sr.width === 0 && sr.height === 0) return null;      // not laid out yet
-  const fx = (sr.left + sr.width / 2) / window.innerWidth;
-  const fy = (sr.top + sr.height / 2) / window.innerHeight;
+  const live = sr.width > 0 || sr.height > 0;             // input bar still shown?
+  let fx, fy, prox;
+  if (live) {
+    fx = (sr.left + sr.width / 2) / window.innerWidth;
+    fy = (sr.top + sr.height / 2) / window.innerHeight;
+    prox = _askBarEl;
+  } else {
+    if (!_askCardEl) return null;
+    const cr = _askCardEl.getBoundingClientRect();
+    if (cr.width === 0 && cr.height === 0) return null;    // not laid out yet
+    fx = (cr.right - 18) / window.innerWidth;              // just inside the right edge
+    fy = (cr.top + cr.height / 2) / window.innerHeight;
+    prox = _askCardEl;
+  }
   const w = screenFracToWorld(fx, fy, ASK_CARRY.z);
-  const br = _askBarEl.getBoundingClientRect();             // proximity to the whole bar
+  const br = prox.getBoundingClientRect();                  // proximity to bar (or card, when locked)
   const dx = Math.max(br.left - POINTER.x, 0, POINTER.x - br.right);
   const dy = Math.max(br.top - POINTER.y, 0, POINTER.y - br.bottom);
   const near = POINTER.seen && Math.hypot(dx, dy) < ASK_CARRY.plugRadius;
-  return { wx: w[0], wy: w[1], near };
+  return { wx: w[0], wy: w[1], near, locked: !live };
 }
 /* show the socket while the swarm is live; the socket pulses until it is
    plugged, then locks solid (`.atl-plugged`). */
@@ -429,7 +445,11 @@ function setAskSocketState(own, plugged) {
   const live = own > 0.05;
   if (_askArmed !== live) { _askBarEl.classList.toggle('atl-live', live); _askArmed = live; }
   const plug = live && plugged;
-  if (_askPlug !== plug) { _askSocketEl.classList.toggle('atl-plugged', plug); _askPlug = plug; }
+  if (_askPlug !== plug) {
+    _askSocketEl.classList.toggle('atl-plugged', plug);
+    _askBarEl.classList.toggle('atl-plugged', plug);   // lets the whole card glow green
+    _askPlug = plug;
+  }
 }
 function sphereHero(pos) {
   const r = rng(21);
@@ -2788,6 +2808,12 @@ if (reduced) {
        and flows like water to the box. Grey dots (even) ride the red path into
        the generic box; the colourful dots (odd) ride the blue path into the
        Ask-Tilli box. `own` releases into the Impact morph at the scene tail. */
+    /* Ask-live has NO pin of its own, and runPin('ai') — which owns askChat.ms —
+       stops firing once the Ask-Tilli stage scrolls out to opacity 0 (the
+       op<0.004 early return in onScroll). Without this the clock freezes and the
+       stream stalls the instant you land on "Now you try". Tick it here in
+       step() (always runs) so the flow keeps pouring. */
+    if (si === ST['Ask-live'] && askChat.ms >= 0) askChat.ms += dt * 1000;
     if (si === ST['Ask-Tilli'] || si === ST['Ask-live']) {
       /* The colourful stream keeps flowing on BOTH the Ask-Tilli scene and the
          following Ask-live ("Now you try") scene — same clock (askChat.ms keeps
@@ -2809,16 +2835,46 @@ if (reduced) {
         const pal = th._askPal || (th._askPal = [C.cyan, C.green, C.yellow].map((h) => new THREE.Color(h).lerp(white, 0.05)));
         const start0 = ASK.promptAt + ASK.flowGap;                  // grey box flow start (ms)
         const start1 = ASK.stagger + ASK.promptAt + ASK.flowGap;    // colour box flow start
-        /* SCROLL-AWAY: attach the END of the COLOURFUL path to the cursor. The
-           start (A) and first handle (C1) stay put — only the tail handle (C2)
-           and endpoint (D) rubber-band onto the pointer as you scroll past the
-           chat's rest point, so the stream keeps flowing but now pours at the
-           cursor instead of the box. `attach` 0→1 over that scroll; off on
-           touch (no pointer). The grey path is never attached. */
-        const attach = POINTER.seen ? (onLive ? 1 : smooth(clamp((S.p - REST) / 0.22))) : 0;
+        /* SCROLL-AWAY / SNAP: the COLOURFUL tail rubber-bands onto a moving
+           target. The start (A) and first handle (C1) stay put — only the tail
+           handle (C2) and endpoint (D) chase the target, so the stream keeps
+           flowing but now pours THERE instead of at the box. Off on touch (no
+           pointer). The grey path is never attached.
+             • On Ask-Tilli the target is the cursor (comet trail).
+             • On Ask-live the socket is ARMED (glowing invite). Once the cursor
+               comes within plugRadius of the input, a plug factor eases 0→1 and
+               the target slides from cursor → socket centre: the dots SNAP into
+               the box and pour in continuously, never stopping. */
+        let tgtX, tgtY;
+        {
+          const cur = screenFracToWorld(POINTER.fx, POINTER.fy, AZ);
+          tgtX = cur[0]; tgtY = cur[1];
+          if (onLive) {
+            const sock = askSocketWorld();
+            if (sock) th._askSockLast = sock;             // remember it for frames the rect read fails
+            /* LATCH: the instant the cursor gets near — OR the moment the demo
+               locks (input bar gone, sock.locked) — the stream connects and
+               STAYS connected. _askPlugF eases to 1 and never decays back, so
+               neither moving the cursor away nor the demo ending can pull the
+               dots out. Resets only when you leave the Ask-live scene (below). */
+            if (sock && (sock.near || sock.locked)) th._askLatched = true;
+            th._askPlugF = lerp(th._askPlugF || 0, th._askLatched ? 1 : 0, 1 - Math.exp(-dt * 7));
+            const s = sock || th._askSockLast;
+            if (s) { tgtX = lerp(cur[0], s.wx, th._askPlugF); tgtY = lerp(cur[1], s.wy, th._askPlugF); }
+            /* arm the glowing socket + guide through the scene body; flip to the
+               green "plugged" lock the moment it latches */
+            const armed = S.p < 0.86;
+            setAskSocketState(armed ? 1 : 0, armed && th._askLatched);
+          }
+        }
+        /* once latched the tail stays pinned even with no pointer motion (e.g.
+           the demo locked while the cursor sits still), so force full attach. */
+        const attach = onLive
+          ? (POINTER.seen || th._askLatched ? 1 : 0)
+          : (POINTER.seen ? smooth(clamp((S.p - REST) / 0.22)) : 0);
         let bWc = bW;
         if (attach > 0.001) {
-          const cur = screenFracToWorld(POINTER.fx, POINTER.fy, AZ);
+          const cur = [tgtX, tgtY];
           const C2 = bW[2], D = bW[3];
           bWc = [bW[0], bW[1],
             [lerp(C2[0], cur[0], attach * 0.7), lerp(C2[1], cur[1], attach * 0.7), AZ],
@@ -2866,6 +2922,10 @@ if (reduced) {
         }
       }
     }
+    /* keep the socket dark everywhere except Ask-live (cheap: setAskSocketState
+       only touches the DOM when the armed/plugged state actually flips), and
+       clear the latch so the connection re-arms fresh next time in. */
+    if (si !== ST['Ask-live']) { setAskSocketState(0, false); th._askLatched = false; th._askPlugF = 0; }
 
     /* ASK-LIVE — the colourful stream keeps FLOWING across this whole scene
        (drawn by the flow block above, extended to run here with attach=1 so
