@@ -1562,6 +1562,9 @@ const washEl = document.getElementById('wash');
 /* the dot field canvas — lifted above the page content while the two
    streams cross paths, so the crossing happens IN FRONT of the hero text */
 const worldEl = document.getElementById('world');
+/* the Impact "30+ schools" card — revealed via .in for the move-into-the-scene
+   entrance once Ask-Tilli has scaled/blurred away (see the scene loop) */
+const impactCardEl = document.getElementById('impactCard');
 let curScene = 0;
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1900,7 +1903,7 @@ function onScroll(fOverride) {
      the crossing screen takes over, and the dashboard climbs in from below
      over the Cross tail. The dots carry the continuity across both. */
   const crossI = ST['Cross'], dashI = ST['Dashboard'], skillsI = ST['12 skills'], onTrackI = skillsI + 1;
-  const aiI = ST['Ask-Tilli'], askLiveI = ST['Ask-live'];
+  const aiI = ST['Ask-Tilli'], askLiveI = ST['Ask-live'], impactI = ST['Impact'];
   /* The dots now CROSS PATHS IN FRONT of the hero text. The hero stays
      centred (no ride-up) and simply fades out as the two streams sweep over
      it, while the whole dot field is lifted above the page content for the
@@ -1943,7 +1946,7 @@ function onScroll(fOverride) {
 
     /* the travelling scenes leave and enter by moving, so they hold full
        opacity across their boundary instead of dissolving */
-    let ty = 0, tx = 0;
+    let ty = 0, tx = 0, exScale = 1, exBlur = 0;
     if (k === 0) {
       /* the hero text stays centred and FADES as the dot streams cross paths
          in front of it (they're lifted above the content — see liftDots
@@ -1986,19 +1989,32 @@ function onScroll(fOverride) {
       ty = -aiOut;
       op = inFade * (1 - smooth(clamp((aiOut - 0.92) / 0.08)));   // opaque until fully gone
     } else if (k === askLiveI) {
-      /* "Ask Tilli anything…" SCROLLS IN from below, opaque the whole way —
-         the mirror of the exit above, so the pair reads as a plain scroll. It
-         then cross-fades out to Impact normally at its own tail. */
+      /* "Ask Tilli anything…" SCROLLS IN from below (opaque the whole way), then
+         on the way OUT to Impact it ZOOMS THROUGH the camera — scales up + fades
+         + blurs, all at once — to sell the feeling of moving INTO the next scene.
+         The dot field fades out over the same window (see the dotMat block). */
       const askIn = smoother(clamp((f - (askLiveI - 0.42)) / 0.42));
-      const askOut = smooth(clamp((f - (askLiveI + 1 - FADE_LEN)) / FADE_LEN));
+      const askOut = smooth(clamp((f - (askLiveI + 0.62)) / 0.34));   // exit ramp over the tail
       ty = 1 - askIn;
       op = smooth(clamp(askIn / 0.08)) * (1 - askOut);
+      exScale = 1 + askOut * 0.7;    // grow past the camera
+      exBlur = askOut * 16;          // px
+    } else if (k === impactI) {
+      /* "30+ schools…" — the stage is held opaque across the Ask-live→Impact
+         boundary while #impactCard does the reveal (fade in + scale up + unblur,
+         0.2s after Ask-live has blurred away — CSS drives that pause). It then
+         cross-fades out to Journey normally at its own tail. */
+      const toJourney = smooth(clamp((f - (impactI + 1 - FADE_LEN)) / FADE_LEN));
+      op = smooth(clamp((f - (impactI - 0.45)) / 0.2)) * (1 - toJourney);
+      if (impactCardEl) impactCardEl.classList.toggle('in', f > impactI - 0.06 && toJourney < 0.9);
     }
-    if (sc.stage && (ty !== sc.ty || tx !== sc.tx)) {
-      sc.stage.style.transform = (tx || ty)
-        ? `translate3d(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%, 0)`
+    if (sc.stage) {
+      const tStr = (tx || ty || exScale !== 1)
+        ? `translate3d(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%, 0)${exScale !== 1 ? ` scale(${exScale.toFixed(3)})` : ''}`
         : '';
-      sc.ty = ty; sc.tx = tx;
+      if (tStr !== sc._tStr) { sc.stage.style.transform = tStr; sc._tStr = tStr; }
+      const fStr = exBlur > 0.05 ? `blur(${exBlur.toFixed(1)}px)` : '';
+      if (fStr !== sc._fStr) { sc.stage.style.filter = fStr; sc._fStr = fStr; }
     }
 
     /* the Collect beat is pure dots — it has no stage at all */
@@ -2935,7 +2951,9 @@ if (reduced) {
        cursor swarm, no re-forming. */
     if (ST['Ask-live'] != null) {
       if (si === ST['Ask-live'])    th.dotMat.opacity = DOT_OPACITY * (1 - smooth(clamp((S.p - 0.82) / 0.16)));
-      else if (si === ST['Impact']) th.dotMat.opacity = DOT_OPACITY * smooth(clamp(S.p / 0.12));
+      /* Impact is now a clean card (no dot swirl) — keep the field hidden through
+         it, fading back in only over the tail so it's ready for Journey. */
+      else if (si === ST['Impact']) th.dotMat.opacity = DOT_OPACITY * smooth(clamp((S.p - 0.85) / 0.12));
       else                          th.dotMat.opacity = DOT_OPACITY;
     }
 
@@ -3009,6 +3027,7 @@ if (reduced) {
   window.__tilliCarry = () => ({ ...ASK_CARRY });
   // buildTuneGUI(() => three);   // dev-only tuning panel — disabled for production. Re-enable to re-bake the kids walk-in.
   buildAskLiveGUI();              // Ask-live carry/plug + prompt-colour controls (toggle with W)
+  buildImpactGUI();               // Impact "30+ schools" ellipse + per-stat controls (toggle with I)
 }
 
 /* ── Ask-live carry/plug + prompt controls ────────────────────────────
@@ -3090,6 +3109,121 @@ function buildAskLiveGUI() {
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
     if (e.key === 'w' || e.key === 'W') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
+}
+
+/* ── Impact stats GUI ─────────────────────────────────────────────────
+   Live controls for the "30+ schools" section: the 100vw ellipse behind the
+   stats (position / height / colour) and each heading/stat's position, scale,
+   and colour. Values are written straight onto the elements as CSS vars, so the
+   DOM updates instantly. Starts visible; toggle with I. "Log values" dumps each
+   element's inline style so the tuned look can be baked into the HTML. */
+function buildImpactGUI() {
+  if (document.getElementById('impactGUI')) return;
+  const el = document.getElementById('impEllipse');
+  const head = document.getElementById('impHead');
+  const s1 = document.getElementById('impStat1');
+  const s2 = document.getElementById('impStat2');
+  if (!el || !head || !s1 || !s2) return;
+
+  /* [label, target, cssVar, min, max, step, unit, initial] — a 1-tuple is a section label */
+  const SLIDERS = [
+    ['— Ellipse (100vw wide) —'],
+    ['Ellipse X',      el,   '--imp-el-x', -400, 400, 2,    'px', 0],
+    ['Ellipse Y',      el,   '--imp-el-y', -400, 400, 2,    'px', 40],
+    ['Ellipse height', el,   '--imp-el-h', 120,  900, 5,    'px', 460],
+    ['— Heading —'],
+    ['Head X',         head, '--hx',  -400, 400, 2,    'px', 0],
+    ['Head Y',         head, '--hy',  -300, 300, 2,    'px', 0],
+    ['Head scale',     head, '--hsc', 0.4,  2,   0.02, '',   1],
+    ['— Stat 1 · children reached —'],
+    ['Stat1 X',        s1,   '--sx',  -500, 500, 2,    'px', 0],
+    ['Stat1 Y',        s1,   '--sy',  -400, 400, 2,    'px', 0],
+    ['Stat1 scale',    s1,   '--ssc', 0.4,  2.5, 0.02, '',   1],
+    ['— Stat 2 · educators trained —'],
+    ['Stat2 X',        s2,   '--sx',  -500, 500, 2,    'px', 0],
+    ['Stat2 Y',        s2,   '--sy',  -400, 400, 2,    'px', 0],
+    ['Stat2 scale',    s2,   '--ssc', 0.4,  2.5, 0.02, '',   1],
+  ];
+  const COLORS = [
+    ['Ellipse colour', el,   '--imp-el-color', '#FBEAA0'],
+    ['Heading colour', head, '--hcolor',       '#1B1F2A'],
+    ['Stat1 colour',   s1,   '--snum',         '#E91E8C'],
+    ['Stat2 colour',   s2,   '--snum',         '#0F94B5'],
+  ];
+  const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
+
+  const panel = document.createElement('div');
+  panel.id = 'impactGUI';
+  panel.style.cssText = 'position:fixed;left:16px;top:16px;z-index:99999;width:238px;max-height:90vh;overflow:auto;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;letter-spacing:.02em;';
+  const title = document.createElement('span'); title.textContent = 'Impact stats';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press I)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  bar.append(title, hide);
+  panel.appendChild(bar);
+
+  const section = (txt) => {
+    const s = document.createElement('div');
+    s.textContent = txt;
+    s.style.cssText = 'margin:11px 0 2px;color:#8f8fa0;font-size:11px;letter-spacing:.03em;';
+    panel.appendChild(s);
+  };
+
+  SLIDERS.forEach((r) => {
+    if (r.length === 1) { section(r[0]); return; }
+    const [label, target, cssVar, min, max, step, unit, init] = r;
+    target.style.setProperty(cssVar, init + unit);
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:7px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    val.textContent = fmt(init, step);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = init;
+    inp.style.cssText = 'width:100%;margin-top:4px;accent-color:#26BDE2;cursor:pointer;';
+    inp.oninput = () => { const v = parseFloat(inp.value); target.style.setProperty(cssVar, v + unit); val.textContent = fmt(v, step); };
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+  });
+
+  section('— Colours —');
+  COLORS.forEach(([label, target, cssVar, init]) => {
+    target.style.setProperty(cssVar, init);
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:8px 0 2px;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'color'; inp.value = init;
+    inp.style.cssText = 'width:44px;height:22px;padding:0;border:none;background:none;cursor:pointer;';
+    inp.oninput = () => target.style.setProperty(cssVar, inp.value);
+    row.append(cap, inp);
+    panel.appendChild(row);
+  });
+
+  const logBtn = document.createElement('button');
+  logBtn.textContent = 'Log values';
+  logBtn.style.cssText = 'all:unset;display:block;text-align:center;cursor:pointer;margin-top:11px;padding:6px 0;' +
+    'border-radius:7px;background:rgba(255,255,255,.09);transition:background .15s;';
+  logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
+  logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
+  logBtn.onclick = () => console.log('IMPACT vars →',
+    { impEllipse: el.getAttribute('style'), impHead: head.getAttribute('style'),
+      impStat1: s1.getAttribute('style'), impStat2: s2.getAttribute('style') });
+  panel.appendChild(logBtn);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'i' || e.key === 'I') panel.style.display = panel.style.display === 'none' ? '' : 'none';
   });
 }
 

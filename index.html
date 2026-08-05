@@ -43,6 +43,43 @@
   .rv { opacity: 0; transition: opacity .7s ease; }
   .rv.in { opacity: 1; }
 
+  /* ── Impact: logo carousel + stats card ───────────────────── */
+  /* #impactCard drives the "move into the scene" reveal — fade in + scale up
+     + unblur, fired 0.2s after Ask-Tilli has scaled/blurred away. The .in class
+     is toggled from the main.js scene loop; the 0.2s pause is the CSS delay. */
+  #impactCard { opacity: 0; transform: scale(0.82); filter: blur(14px);
+    transition: opacity .7s ease, transform .8s cubic-bezier(.2,.7,.3,1), filter .7s ease; }
+  #impactCard.in { opacity: 1; transform: scale(1); filter: blur(0); transition-delay: .2s; }
+  /* Logo carousel — full viewport width (breaks out of the padded step) */
+  .logo-carousel { overflow: hidden; width: 100vw; margin-left: calc(50% - 50vw); margin-bottom: min(52px,6vh);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
+  .logo-track { display: flex; align-items: center; width: max-content; animation: logoScroll 32s linear infinite; }
+  .logo-carousel:hover .logo-track { animation-play-state: paused; }
+  .logo-box { flex: 0 0 auto; height: min(96px,12vh); margin-right: min(30px,3vw);
+    display: flex; align-items: center; justify-content: center; padding: 12px 24px;
+    background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 20px; }
+  .logo-box img { height: 100%; width: auto; object-fit: contain; display: block; }
+  .logo-dot { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 50%; margin-right: min(30px,3vw); }
+  @keyframes logoScroll { to { transform: translateX(-50%); } }
+
+  /* Stats over a 100vw ellipse. #impEllipse position/height/colour and each
+     stat/heading's position/scale/colour are live-tunable via the Impact GUI
+     (press I). Vars: --imp-el-x/y (px), --imp-el-h (px), --imp-el-color;
+     per-item --?x/--?y (px), --?sc (scale), and stat --snum (number colour). */
+  .impact-statwrap { position: relative; }
+  #impEllipse { position: absolute; left: 50%; top: 50%; z-index: 0; pointer-events: none;
+    width: 100vw; height: var(--imp-el-h, 460px);
+    transform: translate(calc(-50% + var(--imp-el-x, 0px)), calc(-50% + var(--imp-el-y, 0px)));
+    background: var(--imp-el-color, #FBEAA0); border-radius: 50%; }
+  .impact-statwrap > *:not(#impEllipse) { position: relative; z-index: 1; }
+  .impact-head { font-size: min(42px,5.2vh); font-weight: 800; letter-spacing: -0.02em; color: var(--hcolor, var(--tl-ink-900)); margin: 0 0 min(30px,4vh);
+    transform: translate(var(--hx,0px), var(--hy,0px)) scale(var(--hsc,1)); }
+  .impact-stats { display: flex; gap: min(80px,8vw); justify-content: center; flex-wrap: wrap; }
+  .impact-stat { transform: translate(var(--sx,0px), var(--sy,0px)) scale(var(--ssc,1)); }
+  .impact-num { font-size: min(54px,6vh); font-weight: 800; letter-spacing: -0.02em; color: var(--snum, var(--tl-ink-900)); }
+  .impact-lbl { font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px; }
+
   /* ── Shared ───────────────────────────────────────────────── */
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
   .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.22em; color: var(--tl-cyan-700); }
@@ -587,13 +624,47 @@
   <div class="stage">
     <div class="step">
       <div class="step-in">
-        <div style="max-width: 1140px; margin: 0 auto; text-align: center; padding: 0 24px;">
-          <h2 class="rv" style="font-size: min(42px, 5.2vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 0 0 min(48px, 6vh);"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
-          <div class="rv" style="display: flex; gap: 64px; justify-content: center; flex-wrap: wrap;">
-            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-pink-600); letter-spacing: -0.02em;">12,510</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">children reached</div></div>
-            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-cyan-700); letter-spacing: -0.02em;">4,000+</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">educators trained</div></div>
-            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-green-600); letter-spacing: -0.02em;">2 → 15</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">sections to branches, one school, one year</div></div>
-            <div><div style="font-size: min(54px, 6vh); font-weight: 800; color: var(--tl-orange-500); letter-spacing: -0.02em;">95%</div><div style="font-size: 14px; font-weight: 600; color: var(--tl-ink-450); margin-top: 4px;">of teachers rate training highly effective</div></div>
+        <div id="impactCard" style="width: 100%; margin: 0 auto; text-align: center;">
+          <!-- Logo carousel spans the full viewport width. Fixed box height,
+               width follows each image's aspect ratio. Dots between logos use the
+               3D dot-field palette. Track is duplicated once so the right→left
+               scroll loops seamlessly (translateX -50% = exactly one copy).
+               Add/remove logo-box+logo-dot pairs in BOTH copies to change the set. -->
+          <div class="logo-carousel">
+            <div class="logo-track">
+              <div class="logo-box"><img src="assets/ds/tilli-wordmark.png" alt=""></div>
+              <span class="logo-dot" style="background:#FCC30B;"></span>
+              <div class="logo-box"><img src="assets/ds/stanford-gse.png" alt=""></div>
+              <span class="logo-dot" style="background:#26BDE2;"></span>
+              <div class="logo-box"><img src="assets/ds/unicef-innovation.png" alt=""></div>
+              <span class="logo-dot" style="background:#56C02B;"></span>
+              <div class="logo-box"><img src="assets/ds/teaching-kit.png" alt=""></div>
+              <span class="logo-dot" style="background:#F99B1C;"></span>
+              <div class="logo-box"><img src="assets/ds/guidebook-l1.png" alt=""></div>
+              <span class="logo-dot" style="background:#E866B0;"></span>
+              <!-- duplicate copy for the seamless loop -->
+              <div class="logo-box"><img src="assets/ds/tilli-wordmark.png" alt=""></div>
+              <span class="logo-dot" style="background:#FCC30B;"></span>
+              <div class="logo-box"><img src="assets/ds/stanford-gse.png" alt=""></div>
+              <span class="logo-dot" style="background:#26BDE2;"></span>
+              <div class="logo-box"><img src="assets/ds/unicef-innovation.png" alt=""></div>
+              <span class="logo-dot" style="background:#56C02B;"></span>
+              <div class="logo-box"><img src="assets/ds/teaching-kit.png" alt=""></div>
+              <span class="logo-dot" style="background:#F99B1C;"></span>
+              <div class="logo-box"><img src="assets/ds/guidebook-l1.png" alt=""></div>
+              <span class="logo-dot" style="background:#E866B0;"></span>
+            </div>
+          </div>
+          <!-- Stats sit ON a 100vw ellipse. #impEllipse + each stat/heading are
+               driven by CSS vars that the "Impact stats" GUI writes live (press I
+               to toggle). -->
+          <div class="impact-statwrap">
+            <div id="impEllipse"></div>
+            <h2 class="impact-head" id="impHead"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
+            <div class="impact-stats">
+              <div class="impact-stat" id="impStat1" style="--snum: var(--tl-pink-600);"><div class="impact-num">12,510</div><div class="impact-lbl">children reached</div></div>
+              <div class="impact-stat" id="impStat2" style="--snum: var(--tl-cyan-700);"><div class="impact-num">4,000+</div><div class="impact-lbl">educators trained</div></div>
+            </div>
           </div>
         </div>
       </div>
@@ -752,6 +823,6 @@
 </div><!-- /content -->
 
 <script src="js/ask-tilli-demo.js?v=1"></script>
-<script type="module" src="js/main.js?v=104"></script>
+<script type="module" src="js/main.js?v=106"></script>
 </body>
 </html>
