@@ -50,29 +50,32 @@
   #impactCard { opacity: 0; transform: scale(0.82); filter: blur(14px);
     transition: opacity .7s ease, transform .8s cubic-bezier(.2,.7,.3,1), filter .7s ease; }
   #impactCard.in { opacity: 1; transform: scale(1); filter: blur(0); transition-delay: .2s; }
-  /* Logo carousel — full viewport width (breaks out of the padded step) */
-  .logo-carousel { overflow: hidden; width: 100vw; margin-left: calc(50% - 50vw); margin-bottom: min(52px,6vh);
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
-            mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
-  .logo-track { display: flex; align-items: center; width: max-content; animation: logoScroll 32s linear infinite; }
-  .logo-carousel:hover .logo-track { animation-play-state: paused; }
-  .logo-box { flex: 0 0 auto; height: min(96px,12vh); margin-right: min(30px,3vw);
-    display: flex; align-items: center; justify-content: center; padding: 12px 24px;
-    background: #fff; border: 1.5px solid var(--tl-line-200); border-radius: 20px; }
-  .logo-box img { height: 100%; width: auto; object-fit: contain; display: block; }
-  .logo-dot { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 50%; margin-right: min(30px,3vw); }
-  @keyframes logoScroll { to { transform: translateX(-50%); } }
+  /* Cylinder-wrap carousel. impact-carousel.js writes each card's 3D transform
+     (position on a cylinder + facing rotation); here we only style the card +
+     set the 3D context. Sits in front of the #impactOrbits dot field.
+     CSS vars the control panel writes:
+       --pcx-w / --pcx-ch  card width / height (px)
+       --pcx-h             carousel band height (px)
+       --pcx-persp         perspective focal length (px; lower = stronger 3D) */
+  .pcx { position: relative; z-index: 2; width: 100%; height: var(--pcx-h, 400px);
+    margin: 0 auto min(40px,5vh); perspective: var(--pcx-persp, 1300px); }
+  .pcx-stage { position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+    transform: translate(-50%, -50%); transform-style: preserve-3d; }
+  .pcx-card { position: absolute; left: 50%; top: 50%;
+    width: var(--pcx-w, 260px); height: var(--pcx-ch, 330px);
+    margin-left: calc(var(--pcx-w, 260px) / -2); margin-top: calc(var(--pcx-ch, 330px) / -2);
+    transform-style: preserve-3d; backface-visibility: hidden; cursor: pointer; will-change: transform;
+    transition: transform .6s cubic-bezier(.22,.61,.36,1), opacity .45s ease; }
+  .pcx-media { position: absolute; inset: 0; border-radius: 20px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; background: #fff;
+    box-shadow: 0 26px 54px rgba(40,36,10,.20), 0 3px 12px rgba(40,36,10,.14); }
+  .pcx-img { max-width: 78%; max-height: 62%; width: auto; height: auto; object-fit: contain; display: block; }
+  .pcx-img:not([src]), .pcx-img[src=""] { display: none; }
 
-  /* Stats over a 100vw ellipse. #impEllipse position/height/colour and each
-     stat/heading's position/scale/colour are live-tunable via the Impact GUI
-     (press I). Vars: --imp-el-x/y (px), --imp-el-h (px), --imp-el-color;
-     per-item --?x/--?y (px), --?sc (scale), and stat --snum (number colour). */
-  .impact-statwrap { position: relative; }
-  #impEllipse { position: absolute; left: 50%; top: 50%; z-index: 0; pointer-events: none;
-    width: 100vw; height: var(--imp-el-h, 460px);
-    transform: translate(calc(-50% + var(--imp-el-x, 0px)), calc(-50% + var(--imp-el-y, 0px)));
-    background: var(--imp-el-color, #FBEAA0); border-radius: 50%; }
-  .impact-statwrap > *:not(#impEllipse) { position: relative; z-index: 1; }
+  /* Each stat/heading's position/scale/colour is live-tunable via the Impact
+     GUI (press I). Vars: per-item --?x/--?y (px), --?sc (scale), and stat
+     --snum (number colour). */
+  .impact-statwrap { position: relative; z-index: 1; }
   .impact-head { font-size: min(42px,5.2vh); font-weight: 800; letter-spacing: -0.02em; color: var(--hcolor, var(--tl-ink-900)); margin: 0 0 min(30px,4vh);
     transform: translate(var(--hx,0px), var(--hy,0px)) scale(var(--hsc,1)); }
   .impact-stats { display: flex; gap: min(80px,8vw); justify-content: center; flex-wrap: wrap; }
@@ -620,50 +623,43 @@
 </div>
 
 <!-- ═══ 10 · IMPACT ═══════════════════════════════════════════ -->
-<div class="scene" data-scene data-wash="255,246,168" data-label="Impact" id="impact" style="height: 230vh;">
+<div class="scene" data-scene data-wash="202,240,254" data-label="Impact" id="impact" style="height: 230vh;">
   <div class="stage">
     <div class="step">
-      <div class="step-in">
-        <div id="impactCard" style="width: 100%; margin: 0 auto; text-align: center;">
-          <!-- Logo carousel spans the full viewport width. Fixed box height,
-               width follows each image's aspect ratio. Dots between logos use the
-               3D dot-field palette. Track is duplicated once so the right→left
-               scroll loops seamlessly (translateX -50% = exactly one copy).
-               Add/remove logo-box+logo-dot pairs in BOTH copies to change the set. -->
-          <div class="logo-carousel">
-            <div class="logo-track">
-              <div class="logo-box"><img src="assets/ds/tilli-wordmark.png" alt=""></div>
-              <span class="logo-dot" style="background:#FCC30B;"></span>
-              <div class="logo-box"><img src="assets/ds/stanford-gse.png" alt=""></div>
-              <span class="logo-dot" style="background:#26BDE2;"></span>
-              <div class="logo-box"><img src="assets/ds/unicef-innovation.png" alt=""></div>
-              <span class="logo-dot" style="background:#56C02B;"></span>
-              <div class="logo-box"><img src="assets/ds/teaching-kit.png" alt=""></div>
-              <span class="logo-dot" style="background:#F99B1C;"></span>
-              <div class="logo-box"><img src="assets/ds/guidebook-l1.png" alt=""></div>
-              <span class="logo-dot" style="background:#E866B0;"></span>
-              <!-- duplicate copy for the seamless loop -->
-              <div class="logo-box"><img src="assets/ds/tilli-wordmark.png" alt=""></div>
-              <span class="logo-dot" style="background:#FCC30B;"></span>
-              <div class="logo-box"><img src="assets/ds/stanford-gse.png" alt=""></div>
-              <span class="logo-dot" style="background:#26BDE2;"></span>
-              <div class="logo-box"><img src="assets/ds/unicef-innovation.png" alt=""></div>
-              <span class="logo-dot" style="background:#56C02B;"></span>
-              <div class="logo-box"><img src="assets/ds/teaching-kit.png" alt=""></div>
-              <span class="logo-dot" style="background:#F99B1C;"></span>
-              <div class="logo-box"><img src="assets/ds/guidebook-l1.png" alt=""></div>
-              <span class="logo-dot" style="background:#E866B0;"></span>
+      <!-- 3D orbiting dot ring — its OWN full-bleed layer (sibling of the card),
+           so the ring can spill past the card edges without being clipped. Sits
+           behind the card content, which is lifted to z-index:1. Perspective/
+           depth + all motion live in js/impact-orbits.js. -->
+      <canvas id="impactOrbits" style="position:absolute; inset:0; width:100%; height:100%;
+              z-index:0; pointer-events:none;"></canvas>
+      <div class="step-in" style="position:relative; z-index:1;">
+        <div id="impactCard" style="width: 100%; margin: 0 auto; text-align: center; position: relative;">
+          <!-- Cylinder BARREL of logo cards — in front of the dot ring, rotates
+               continuously. Duplicated once (10 = 5×2) so the barrel stays full
+               and the loop is seamless: cards recycle around the hidden back.
+               Swap a logo by changing its .pcx-img `src` (keep the two copies
+               matched). Speed/radius/size are live via the control panel. -->
+          <div id="impactCarousel" class="pcx">
+            <div class="pcx-stage">
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/unicef-innovation.png" alt="UNICEF Innovation"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/stanford-gse.png" alt="Stanford GSE"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/tilli-wordmark.png" alt="Tilli"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/teaching-kit.png" alt="Tilli SEL Teaching Kit"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/guidebook-l1.png" alt="Tilli Guidebook Level 1"></div></div>
+              <!-- duplicate copy for the seamless loop (keep in sync with above) -->
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/unicef-innovation.png" alt="UNICEF Innovation"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/stanford-gse.png" alt="Stanford GSE"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/tilli-wordmark.png" alt="Tilli"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/teaching-kit.png" alt="Tilli SEL Teaching Kit"></div></div>
+              <div class="pcx-card"><div class="pcx-media"><img class="pcx-img" src="assets/ds/guidebook-l1.png" alt="Tilli Guidebook Level 1"></div></div>
             </div>
           </div>
-          <!-- Stats sit ON a 100vw ellipse. #impEllipse + each stat/heading are
-               driven by CSS vars that the "Impact stats" GUI writes live (press I
-               to toggle). -->
+
           <div class="impact-statwrap">
-            <div id="impEllipse"></div>
-            <h2 class="impact-head" id="impHead"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
+            <h2 class="impact-head" id="impHead" style="--hy: 34px;"><span style="color: var(--tl-pink-600);">30+</span> schools are already with us.</h2>
             <div class="impact-stats">
-              <div class="impact-stat" id="impStat1" style="--snum: var(--tl-pink-600);"><div class="impact-num">12,510</div><div class="impact-lbl">children reached</div></div>
-              <div class="impact-stat" id="impStat2" style="--snum: var(--tl-cyan-700);"><div class="impact-num">4,000+</div><div class="impact-lbl">educators trained</div></div>
+              <div class="impact-stat" id="impStat1" style="--snum: var(--tl-pink-600); --sy: 34px;"><div class="impact-num">12,510</div><div class="impact-lbl">children reached</div></div>
+              <div class="impact-stat" id="impStat2" style="--snum: var(--tl-cyan-700); --sy: 34px;"><div class="impact-num">4,000+</div><div class="impact-lbl">educators trained</div></div>
             </div>
           </div>
         </div>
@@ -823,6 +819,8 @@
 </div><!-- /content -->
 
 <script src="js/ask-tilli-demo.js?v=1"></script>
-<script type="module" src="js/main.js?v=106"></script>
+<script src="js/impact-orbits.js?v=4"></script>
+<script src="js/impact-carousel.js?v=7"></script>
+<script type="module" src="js/main.js?v=110"></script>
 </body>
 </html>

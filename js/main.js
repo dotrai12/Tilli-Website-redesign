@@ -3025,9 +3025,10 @@ if (reduced) {
   window.__tilliViewsHead = () => VIEWS_HEAD;
   window.__tilliDrain = () => drainAmt;
   window.__tilliCarry = () => ({ ...ASK_CARRY });
-  // buildTuneGUI(() => three);   // dev-only tuning panel — disabled for production. Re-enable to re-bake the kids walk-in.
-  buildAskLiveGUI();              // Ask-live carry/plug + prompt-colour controls (toggle with W)
-  buildImpactGUI();               // Impact "30+ schools" ellipse + per-stat controls (toggle with I)
+  // Dev tuning panels — all disabled for production. Re-enable a call to tune live.
+  // buildTuneGUI(() => three);   // kids walk-in bake (toggle with G)
+  // buildAskLiveGUI();           // Ask-live carry/plug + prompt-colour controls (toggle with W)
+  // buildImpactGUI();            // Impact per-stat controls (toggle with I)
 }
 
 /* ── Ask-live carry/plug + prompt controls ────────────────────────────
@@ -3113,25 +3114,19 @@ function buildAskLiveGUI() {
 }
 
 /* ── Impact stats GUI ─────────────────────────────────────────────────
-   Live controls for the "30+ schools" section: the 100vw ellipse behind the
-   stats (position / height / colour) and each heading/stat's position, scale,
-   and colour. Values are written straight onto the elements as CSS vars, so the
+   Live controls for the "30+ schools" section: each heading/stat's position,
+   scale, and colour. Values are written straight onto the elements as CSS vars, so the
    DOM updates instantly. Starts visible; toggle with I. "Log values" dumps each
    element's inline style so the tuned look can be baked into the HTML. */
 function buildImpactGUI() {
   if (document.getElementById('impactGUI')) return;
-  const el = document.getElementById('impEllipse');
   const head = document.getElementById('impHead');
   const s1 = document.getElementById('impStat1');
   const s2 = document.getElementById('impStat2');
-  if (!el || !head || !s1 || !s2) return;
+  if (!head || !s1 || !s2) return;
 
   /* [label, target, cssVar, min, max, step, unit, initial] — a 1-tuple is a section label */
   const SLIDERS = [
-    ['— Ellipse (100vw wide) —'],
-    ['Ellipse X',      el,   '--imp-el-x', -400, 400, 2,    'px', 0],
-    ['Ellipse Y',      el,   '--imp-el-y', -400, 400, 2,    'px', 40],
-    ['Ellipse height', el,   '--imp-el-h', 120,  900, 5,    'px', 460],
     ['— Heading —'],
     ['Head X',         head, '--hx',  -400, 400, 2,    'px', 0],
     ['Head Y',         head, '--hy',  -300, 300, 2,    'px', 0],
@@ -3146,7 +3141,6 @@ function buildImpactGUI() {
     ['Stat2 scale',    s2,   '--ssc', 0.4,  2.5, 0.02, '',   1],
   ];
   const COLORS = [
-    ['Ellipse colour', el,   '--imp-el-color', '#FBEAA0'],
     ['Heading colour', head, '--hcolor',       '#1B1F2A'],
     ['Stat1 colour',   s1,   '--snum',         '#E91E8C'],
     ['Stat2 colour',   s2,   '--snum',         '#0F94B5'],
@@ -3216,7 +3210,7 @@ function buildImpactGUI() {
   logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
   logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
   logBtn.onclick = () => console.log('IMPACT vars →',
-    { impEllipse: el.getAttribute('style'), impHead: head.getAttribute('style'),
+    { impHead: head.getAttribute('style'),
       impStat1: s1.getAttribute('style'), impStat2: s2.getAttribute('style') });
   panel.appendChild(logBtn);
 
