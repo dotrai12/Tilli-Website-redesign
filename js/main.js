@@ -106,6 +106,7 @@ function measure() {
   });
   fitSteps();
   buildJar();
+  buildBurst();
 }
 
 /* Stages are viewport-locked, so a step that is taller than the screen
@@ -449,6 +450,266 @@ function buildJarGUI() {
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
     if (e.key === 'm' || e.key === 'M') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
+}
+
+/* ── Jar burst → ring (Journey → Let's talk) ────────────────────────
+   As you scroll off "What our partner schools did", the marble jar lifts off
+   the left, flies to the centre of the screen and BURSTS: the marbles fly out
+   and settle into the scattered ring-of-dots-and-threads from the hero
+   ("They measure…"). The closing "Let Tilli help…" CTA then scales in INSIDE
+   the ring, exactly like the 30+ schools card reveal.
+
+   Self-contained on its own 2-D canvas and driven purely by scroll, so it is
+   fully scrubbable and reverses on the way back up. Tunables live in BURST;
+   the B-GUI (buildBurstGUI) exposes dot count + ring spread (+ a few more).
+
+   Timeline over the burst progress bt (0..1):
+     0.00–0.28  jar gathers to centre + grows        (gather)
+     0.06→      glass fades in, then shatters at 0.30
+     0.30–0.64  marbles explode out into the ring     (staggered per dot)
+     0.58–0.80  grey threads stitch across the ring
+     (≥ ~0.62 the CTA begins its scale-in — see onScroll) */
+const BURST = {
+  dots:      220,    // marbles in the jar → dots in the ring (live: GUI "Dots")
+  spread:    0.34,   // radial scatter of the ring band, as a fraction of ring radius (live: GUI "Ring spread")
+  ringW:     0.36,   // ring radius X, as a fraction of viewport width
+  ringH:     0.40,   // ring radius Y, as a fraction of viewport height
+  angJit:    0.22,   // angular scatter (rad) so the dots aren't evenly spoked
+  dotSize:   7,      // dot radius, px
+  linkDist:  0.14,   // longest neighbour thread, as a fraction of min(vw,vh)
+  linkMax:   3,      // most threads drawn per dot
+  jarGrow:   1.25,   // how much the jar scales up as it reaches centre
+  overshoot: 0.14,   // outward pop past the ring before it settles (fraction of min(vw,vh))
+  colors: ['#56C02B', '#26BDE2', '#FCC30B', '#F7943E', '#EC2C8F'],   // green · cyan · yellow · orange · pink
+};
+let burst = null;   // { canvas, ctx, dots:[…], links:[[i,j]…], dpr, jarRect, N }
+
+/* one dot's ring resting spot, in screen px (recomputed live so it tracks the
+   viewport + the GUI). Angular + radial jitter turn the ellipse into a band. */
+function burstRingXY(d) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const ang = d.baseAngle + d.angJit * BURST.angJit;
+  const rr = 1 + d.radJit * BURST.spread;
+  return [vw / 2 + Math.cos(ang) * vw * BURST.ringW * rr,
+          vh / 2 + Math.sin(ang) * vh * BURST.ringH * rr];
+}
+
+/* thread each dot to its few nearest ring neighbours (within linkDist), deduped */
+function computeBurstLinks() {
+  if (!burst) return;
+  const md = Math.min(window.innerWidth, window.innerHeight) * BURST.linkDist;
+  const pos = burst.dots.map(burstRingXY);
+  const seen = new Set(), out = [];
+  for (let i = 0; i < pos.length; i++) {
+    const near = [];
+    for (let j = 0; j < pos.length; j++) {
+      if (i === j) continue;
+      const dx = pos[i][0] - pos[j][0], dy = pos[i][1] - pos[j][1], d2 = dx * dx + dy * dy;
+      if (d2 < md * md) near.push([d2, j]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    for (let k = 0; k < Math.min(BURST.linkMax, near.length); k++) {
+      const j = near[k][1], a = Math.min(i, j), b = Math.max(i, j), key = a * 1e6 + b;
+      if (!seen.has(key)) { seen.add(key); out.push([a, b]); }
+    }
+  }
+  burst.links = out;
+}
+
+/* build (or resize) the burst canvas + dot field. Reseeded deterministically so
+   the layout is stable across resizes; the dot array is only rebuilt when the
+   count changes. Skipped for reduced-motion. */
+function buildBurst() {
+  if (reduced) return;
+  const content = document.querySelector('.content');
+  if (!content) return;
+  let canvas = document.getElementById('burstCanvas');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'burstCanvas';
+    // first child of .content → above #world (z1), below the stages (also z2, but later in DOM)
+    canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;display:none;';
+    content.insertBefore(canvas, content.firstChild);
+  }
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(window.innerWidth * dpr);
+  canvas.height = Math.round(window.innerHeight * dpr);
+  const N = Math.max(20, Math.round(BURST.dots));
+  if (!burst || burst.N !== N) {
+    const rand = rng(2718), G = Math.PI * (3 - Math.sqrt(5)), dots = [];
+    for (let i = 0; i < N; i++) {
+      dots.push({
+        col: BURST.colors[i % BURST.colors.length],
+        pileR: Math.sqrt((i + 0.5) / N),   // phyllotaxis disk radius (0..1) — the marble pile
+        pileA: i * G,                       // phyllotaxis angle
+        baseAngle: (i / N) * Math.PI * 2,   // even spread around the ring
+        angJit: (rand() - 0.5) * 2,         // × BURST.angJit
+        radJit: (rand() - 0.5) * 2,         // × BURST.spread
+        phase: rand(),                      // explode stagger
+      });
+    }
+    burst = { canvas, ctx: canvas.getContext('2d'), dots, links: [], dpr, jarRect: null, N,
+              px: new Float64Array(N), py: new Float64Array(N) };
+  } else {
+    burst.canvas = canvas; burst.ctx = canvas.getContext('2d'); burst.dpr = dpr;
+  }
+  computeBurstLinks();
+}
+
+/* the scroll window (in scene-space f) over which the burst plays */
+function burstWindow() {
+  const j = ST['Journey'];
+  if (j == null) return null;
+  return { start: j + 0.70, end: j + 1.30, talkI: j + 1 };
+}
+
+/* soft glass sphere with a bright rim — fades in, then shatters as dots leave */
+function drawBurstGlass(ctx, cx, cy, R, a) {
+  const g = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+  g.addColorStop(0,   `rgba(255,255,255,${(0.30 * a).toFixed(3)})`);
+  g.addColorStop(0.7, `rgba(232,242,247,${(0.10 * a).toFixed(3)})`);
+  g.addColorStop(1,   `rgba(200,215,225,${(0.24 * a).toFixed(3)})`);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = `rgba(255,255,255,${(0.5 * a).toFixed(3)})`;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+}
+
+/* draw one frame of the burst at progress bt (0..1) */
+function renderBurst(bt) {
+  const { ctx, dpr, dots, px, py } = burst;
+  const vw = window.innerWidth, vh = window.innerHeight, scx = vw / 2, scy = vh / 2;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, vw, vh);
+
+  // the jar travels from its rest spot on the left to screen centre, and grows
+  const gather = smooth(clamp(bt / 0.28));
+  const jr = burst.jarRect || { cx: vw * 0.12, cy: scy, R: Math.min(vw, vh) * 0.16 };
+  const jcx = lerp(jr.cx, scx, gather), jcy = lerp(jr.cy, scy, gather);
+  const jR = jr.R * lerp(1, BURST.jarGrow, gather);
+
+  // glass in over the first sliver, gone once the marbles start leaving
+  const glassA = smooth(clamp(bt / 0.06)) * (1 - smooth(clamp((bt - 0.30) / 0.10)));
+  if (glassA > 0.01) drawBurstGlass(ctx, jcx, jcy, jR, glassA);
+
+  const pop = BURST.overshoot * Math.min(vw, vh);
+  for (let i = 0; i < dots.length; i++) {
+    const d = dots[i];
+    const pr = d.pileR * jR * 0.86;                       // marble's spot in the pile
+    const jx = jcx + Math.cos(d.pileA) * pr, jy = jcy + Math.sin(d.pileA) * pr;
+    const r = burstRingXY(d);
+    const e = smoother(clamp((bt - 0.30 - d.phase * 0.06) / 0.34));   // staggered explode
+    const dx = r[0] - scx, dy = r[1] - scy, dl = Math.hypot(dx, dy) || 1;
+    const out = Math.sin(Math.PI * e) * pop;              // outward overshoot, peaks mid-flight
+    px[i] = lerp(jx, r[0], e) + (dx / dl) * out;
+    py[i] = lerp(jy, r[1], e) + (dy / dl) * out;
+  }
+
+  // grey threads stitch on as the ring settles
+  const linkA = smooth(clamp((bt - 0.58) / 0.22)) * 0.5;
+  if (linkA > 0.01) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(140,140,150,${linkA.toFixed(3)})`;
+    ctx.beginPath();
+    for (let k = 0; k < burst.links.length; k++) {
+      const a = burst.links[k][0], b = burst.links[k][1];
+      ctx.moveTo(px[a], py[a]); ctx.lineTo(px[b], py[b]);
+    }
+    ctx.stroke();
+  }
+
+  const ds = BURST.dotSize;
+  for (let i = 0; i < dots.length; i++) {
+    ctx.fillStyle = dots[i].col;
+    ctx.beginPath(); ctx.arc(px[i], py[i], ds, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* called every frame from the render loop. Shows/hides the canvas around the
+   Journey→Let's-talk boundary, hands the on-screen jar over from the real DOM
+   marbles to the canvas, and draws the burst at the current scroll progress. */
+function updateBurst(dt, f) {
+  if (reduced) return;
+  if (!burst) { buildBurst(); if (!burst) return; }
+  const win = burstWindow();
+  if (!win) return;
+  const jarEl = document.querySelector('.j-jar');
+  const active = f > win.start - 0.05 && f < win.end + 0.60;
+  if (!active) {
+    if (burst.canvas.style.display !== 'none') burst.canvas.style.display = 'none';
+    if (jarEl && jarEl.dataset.burstHidden) { jarEl.style.opacity = ''; delete jarEl.dataset.burstHidden; }
+    return;
+  }
+  const bt = clamp((f - win.start) / (win.end - win.start));
+  burst.canvas.style.display = 'block';
+  // hand-off: cache the DOM jar's rest position, then hide it so we don't see two
+  if (jarEl) {
+    const r = jarEl.getBoundingClientRect();
+    if (r.width > 10) burst.jarRect = { cx: r.left + r.width / 2, cy: r.top + r.height / 2, R: r.width / 2 };
+    if (bt > 0.001) { jarEl.style.opacity = '0'; jarEl.dataset.burstHidden = '1'; }
+    else if (jarEl.dataset.burstHidden) { jarEl.style.opacity = ''; delete jarEl.dataset.burstHidden; }
+  }
+  renderBurst(bt);
+}
+
+/* ── Burst GUI ─────────────────────────────────────────────────────
+   Live controls for the jar-burst ring. Scroll to the "What our partner
+   schools did" → "Let Tilli help…" boundary so the ring is on screen while
+   you tune. Toggle with B. Remove the buildBurstGUI() call in init to ship. */
+function buildBurstGUI() {
+  if (document.getElementById('burstGUI')) return;
+  const panel = document.createElement('div');
+  panel.id = 'burstGUI';
+  panel.style.cssText = 'position:fixed;left:16px;top:16px;z-index:99999;width:236px;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;font-weight:600;';
+  const title = document.createElement('span'); title.textContent = 'Jar burst → ring';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press B)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  bar.append(title, hide); panel.appendChild(bar);
+  const note = document.createElement('div');
+  note.textContent = 'Scroll to the closing CTA to preview.';
+  note.style.cssText = 'color:#8a8a96;margin:2px 0 4px;font-size:11px;';
+  panel.appendChild(note);
+
+  // relinks: recompute threads (ring geometry changed). rebuild: new dot count.
+  const relink = () => computeBurstLinks();
+  const rebuild = () => buildBurst();
+  const slider = (label, key, min, max, step, onDone) => {
+    const row = document.createElement('label'); row.style.cssText = 'display:block;margin:8px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    const fmt = (v) => (step < 1 ? v.toFixed(step < 0.1 ? 2 : 1) : v.toFixed(0));
+    val.textContent = fmt(BURST[key]);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = BURST[key];
+    inp.style.cssText = 'width:100%;margin-top:3px;accent-color:#EC2C8F;cursor:pointer;';
+    inp.oninput = () => { BURST[key] = parseFloat(inp.value); val.textContent = fmt(BURST[key]); if (onDone) onDone(); };
+    row.append(cap, val, inp); panel.appendChild(row);
+  };
+  slider('Dots',          'dots',      40,  500,  1,    rebuild);
+  slider('Ring spread',   'spread',    0,   0.7,  0.01, relink);
+  slider('Ring width',    'ringW',     0.2, 0.55, 0.01, relink);
+  slider('Ring height',   'ringH',     0.2, 0.55, 0.01, relink);
+  slider('Angle scatter', 'angJit',    0,   0.6,  0.01, relink);
+  slider('Dot size',      'dotSize',   2,   14,   0.5,  null);
+  slider('Thread reach',  'linkDist',  0.05, 0.28, 0.005, relink);
+  slider('Threads / dot', 'linkMax',   0,   6,    1,    relink);
+  slider('Jar grow',      'jarGrow',   1,   1.9,  0.01, null);
+  slider('Burst pop',     'overshoot', 0,   0.3,  0.01, null);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'b' || e.key === 'B') panel.style.display = panel.style.display === 'none' ? '' : 'none';
   });
 }
 
@@ -1897,6 +2158,7 @@ const worldEl = document.getElementById('world');
 /* the Impact "30+ schools" card — revealed via .in for the move-into-the-scene
    entrance once Ask-Tilli has scaled/blurred away (see the scene loop) */
 const impactCardEl = document.getElementById('impactCard');
+const letsTalkCardEl = document.getElementById('letsTalkCard');
 let curScene = 0;
 
 /* Orbit rise — as the Impact scene scrolls from step 1 ("30+ schools") to
@@ -2363,6 +2625,12 @@ function onScroll(fOverride) {
       const cin = smooth(clamp((f - (journeyI - XFADE / 2)) / XFADE));
       const toTalk = smooth(clamp((f - (journeyI + 1 - FADE_LEN)) / FADE_LEN));
       op = cin * (1 - toTalk);
+    } else if (k === journeyI + 1) {
+      /* the closing CTA rides in on the jar-burst: the stage stays dark through
+         the ring build, then fades up and #letsTalkCard does its scale/blur
+         reveal (see BURST / updateBurst) once the ring has settled around it. */
+      op = smooth(clamp((f - k) / 0.20));
+      if (letsTalkCardEl) letsTalkCardEl.classList.toggle('in', f > k + 0.06);
     }
     if (sc.stage) {
       const tStr = (tx || ty || exScale !== 1)
@@ -2744,6 +3012,7 @@ if (reduced) {
     if (Math.abs(rawF - renderF) < 0.0004) renderF = rawF;
     f = onScroll(renderF);
     updateJar(dt, f);   // Journey marble pour + physics (see buildJar)
+    updateBurst(dt, f); // Journey→Let's-talk jar burst → ring (see BURST)
 
     if (!three) { return; }
     const th = three;
@@ -3422,6 +3691,7 @@ if (reduced) {
   // buildStep2GUI();             // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
   // buildJourneyGUI();           // Journey: heading position/scale + jar offset/size (toggle with J)
   // buildJarGUI();               // Marble jar: marble size + fill + sound + replay (toggle with M)
+  buildBurstGUI();                // Jar burst → ring: dot count + ring spread + threads (toggle with B) — comment out to ship
 }
 
 /* ── Impact step-2 GUI ────────────────────────────────────────────────
