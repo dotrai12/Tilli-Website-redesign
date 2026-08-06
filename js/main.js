@@ -3028,7 +3028,7 @@ if (reduced) {
   // Dev tuning panels — all disabled for production. Re-enable a call to tune live.
   // buildTuneGUI(() => three);   // kids walk-in bake (toggle with G)
   // buildAskLiveGUI();           // Ask-live carry/plug + prompt-colour controls (toggle with W)
-  // buildImpactGUI();            // Impact per-stat controls (toggle with I)
+  // buildImpactGUI();            // "30+ schools" text mover (toggle with I, or drag on page)
 }
 
 /* ── Ask-live carry/plug + prompt controls ────────────────────────────
@@ -3120,32 +3120,19 @@ function buildAskLiveGUI() {
    element's inline style so the tuned look can be baked into the HTML. */
 function buildImpactGUI() {
   if (document.getElementById('impactGUI')) return;
-  const head = document.getElementById('impHead');
-  const s1 = document.getElementById('impStat1');
-  const s2 = document.getElementById('impStat2');
-  if (!head || !s1 || !s2) return;
+  const el = document.getElementById('schCopy');
+  if (!el) return;
 
   /* [label, target, cssVar, min, max, step, unit, initial] — a 1-tuple is a section label */
   const SLIDERS = [
-    ['— Heading —'],
-    ['Head X',         head, '--hx',  -400, 400, 2,    'px', 0],
-    ['Head Y',         head, '--hy',  -300, 300, 2,    'px', 0],
-    ['Head scale',     head, '--hsc', 0.4,  2,   0.02, '',   1],
-    ['— Stat 1 · children reached —'],
-    ['Stat1 X',        s1,   '--sx',  -500, 500, 2,    'px', 0],
-    ['Stat1 Y',        s1,   '--sy',  -400, 400, 2,    'px', 0],
-    ['Stat1 scale',    s1,   '--ssc', 0.4,  2.5, 0.02, '',   1],
-    ['— Stat 2 · educators trained —'],
-    ['Stat2 X',        s2,   '--sx',  -500, 500, 2,    'px', 0],
-    ['Stat2 Y',        s2,   '--sy',  -400, 400, 2,    'px', 0],
-    ['Stat2 scale',    s2,   '--ssc', 0.4,  2.5, 0.02, '',   1],
+    ['— "30+ schools" text —'],
+    ['Text X',     el, '--tx',  -900, 900, 1,    'px', -88],
+    ['Text Y',     el, '--ty',  -600, 600, 1,    'px', 0],
+    ['Text scale', el, '--tsc', 0.4,  2.2, 0.01, '',   1.65],
   ];
-  const COLORS = [
-    ['Heading colour', head, '--hcolor',       '#1B1F2A'],
-    ['Stat1 colour',   s1,   '--snum',         '#E91E8C'],
-    ['Stat2 colour',   s2,   '--snum',         '#0F94B5'],
-  ];
+  const COLORS = [];
   const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
+  const inputs = {};
 
   const panel = document.createElement('div');
   panel.id = 'impactGUI';
@@ -3156,7 +3143,7 @@ function buildImpactGUI() {
 
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;letter-spacing:.02em;';
-  const title = document.createElement('span'); title.textContent = 'Impact stats';
+  const title = document.createElement('span'); title.textContent = '"30+ schools" text';
   const hide = document.createElement('button');
   hide.textContent = '×'; hide.title = 'hide (press I)';
   hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
@@ -3187,9 +3174,32 @@ function buildImpactGUI() {
     inp.oninput = () => { const v = parseFloat(inp.value); target.style.setProperty(cssVar, v + unit); val.textContent = fmt(v, step); };
     row.append(cap, val, inp);
     panel.appendChild(row);
+    inputs[cssVar] = { inp, val, step };
   });
 
-  section('— Colours —');
+  /* drag the text block directly on the page — updates the same vars + sliders */
+  el.style.cursor = 'grab';
+  let drag = null;
+  const setVar = (cssVar, v) => {
+    el.style.setProperty(cssVar, v + 'px');
+    const r = inputs[cssVar]; if (r) { r.inp.value = v; r.val.textContent = fmt(v, r.step); }
+  };
+  el.addEventListener('pointerdown', (e) => {
+    drag = { x: e.clientX, y: e.clientY,
+             tx: parseFloat(el.style.getPropertyValue('--tx')) || 0,
+             ty: parseFloat(el.style.getPropertyValue('--ty')) || 0 };
+    el.setPointerCapture(e.pointerId); el.style.cursor = 'grabbing'; e.preventDefault();
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    setVar('--tx', Math.round(drag.tx + (e.clientX - drag.x)));
+    setVar('--ty', Math.round(drag.ty + (e.clientY - drag.y)));
+  });
+  const endDrag = () => { if (drag) { drag = null; el.style.cursor = 'grab'; } };
+  el.addEventListener('pointerup', endDrag);
+  el.addEventListener('pointercancel', endDrag);
+
+  if (COLORS.length) section('— Colours —');
   COLORS.forEach(([label, target, cssVar, init]) => {
     target.style.setProperty(cssVar, init);
     const row = document.createElement('label');
@@ -3209,9 +3219,7 @@ function buildImpactGUI() {
     'border-radius:7px;background:rgba(255,255,255,.09);transition:background .15s;';
   logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
   logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
-  logBtn.onclick = () => console.log('IMPACT vars →',
-    { impHead: head.getAttribute('style'),
-      impStat1: s1.getAttribute('style'), impStat2: s2.getAttribute('style') });
+  logBtn.onclick = () => console.log('schCopy →', el.getAttribute('style'));
   panel.appendChild(logBtn);
 
   document.body.appendChild(panel);
