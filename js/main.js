@@ -54,6 +54,7 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const FADE_LEN = 0.12;
 const FADE_OVER = 0.04;
 const STEP_FADE = 0.22;
+const FLIP_SPAN = 0.3;   // Journey cards: scene-progress (in card-units) each Y-axis card flip takes
 /* The flow spans three scenes now: Start (ring) → Cross (the dots cross
    paths, a dedicated empty screen) → Dashboard (they pour into the card).
    MORPH_AT / SCROLL_AT are Start-scene fractions: where the dots begin
@@ -121,26 +122,73 @@ function fitSteps() {
   }));
 }
 
-/* ── Journey jar: marbles that pour in a third per card ──────────────
-   The glass sphere on the left of the Journey cards is a "jar". Each of
-   the three cards (Measure · Ask · Intervene) fills it one third — the
-   marbles for that third are that stage's colour and drop in from the
-   jar's mouth as the card arrives, settling bottom-up. Tunables: */
+/* ── Journey jar: a real marble drop ────────────────────────────────
+   The glass sphere to the left of the Journey cards is a "jar". The
+   moment the section lands, marbles STREAM in from the mouth — the same
+   continuous, one-after-another flow as the "Any AI can…" dots — and a
+   lightweight physics sim (gravity + round glass walls + marble-on-marble
+   collisions) drops them in so they bounce, jostle and settle into a pile.
+   The pour runs the whole time you're on the section and only stops when
+   you scroll off it (which resets the jar, so it fills fresh next time).
+   Tunables: */
 const JAR = {
-  rFrac:      0.043,  // marble radius as a fraction of the jar diameter
-  gap:        1.08,   // centre-to-centre spacing (× marble diameter) — >1 leaves air
+  rFrac:      0.041,  // marble radius as a fraction of the jar diameter (live: GUI "Marble size")
+  gap:        0.9,    // hex spacing of the rest-slot grid — sets how many marbles the jar can hold (smaller = denser = more marbles = fuller)
   wallFrac:   0.05,   // inset from the glass wall (fraction of diameter)
-  dropspan:   4.5,    // how many marbles are mid-drop at once (bigger = softer cascade)
-  pourSpan:   0.5,    // scroll-length (in cards) each third takes to pour
-  pourOffset: 0.35,   // how early a third finishes pouring vs its card centring
-  spreadFrac: 0.05,   // width of the pour "stream" at the mouth (fraction of diameter)
+  fillFrac:   1.0,    // share of the slots actually poured (live: GUI "Fill"). Because the poured COUNT scales with the slot grid, and the slot grid scales as 1/rFrac², the filled AREA — and so the fill height — is independent of marble size
+  releaseMs:  55,     // ms between marbles leaving the mouth — the pour cadence
+  spreadFrac: 0.13,   // width of the pour stream at the mouth (fraction of diameter)
+  gravity:    6.0,    // fall acceleration, in jar-diameters / s²
+  drop:       0.4,    // downward speed as a marble leaves the mouth, in diameters / s
+  damp:       0.9,    // velocity kept each substep (<1 bleeds energy so the pile settles)
+  iterations: 5,      // collision-relaxation passes per frame (more = firmer pile, less overlap)
   colors:     ['#56C02B', '#26BDE2', '#FCC30B'],  // Measure green · Ask cyan · Intervene yellow
+  sound:      true,   // play a soft "plink" per marble as the jar fills (live: GUI "Sound")
 };
-let jar = null;   // { el, S, marbles:[{el,o,rx,ry,entryX}], entryY }
+let jar = null;   // { el, S, r, R, mouthY, marbles:[…], released, live, next, acc }
 
-/* Build (or rebuild on resize) the marble field inside .j-jar. Marbles are
-   hex-packed inside the inscribed circle, sorted bottom-first, and split into
-   three colour bands — one per card. Skipped while the jar is hidden (mobile). */
+/* ── Marble "plink" ─────────────────────────────────────────────────
+   A short synthesized blip per poured marble (Web Audio — no asset files).
+   Browsers block audio until the user interacts, so the context is created
+   lazily and resumed on the first gesture. Pitch rises a touch as the jar
+   fills; a small throttle keeps rapid catch-up pours from stacking. */
+let jarAudio = null, lastPlink = 0;
+function jarAudioCtx() {
+  if (jarAudio === null) {
+    try { jarAudio = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch { jarAudio = false; }                    // false = unsupported, don't retry
+  }
+  return jarAudio || null;
+}
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) =>
+  window.addEventListener(ev, () => {
+    const c = jarAudioCtx();
+    if (c && c.state === 'suspended') c.resume();
+  }, { passive: true }));
+
+/* one soft plink; `fill` 0..1 nudges the pitch up as the pile grows */
+function marblePlink(fill) {
+  if (!JAR.sound) return;
+  const c = jarAudioCtx();
+  if (!c || c.state !== 'running') return;
+  const t = c.currentTime;
+  if (t - lastPlink < 0.035) return;               // throttle bursts
+  lastPlink = t;
+  const o = c.createOscillator(), g = c.createGain();
+  const f0 = 430 + fill * 170 + (jar ? Math.random() * 90 : 0);
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f0 * 0.55, t + 0.09);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.11, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0004, t + 0.13);
+  o.connect(g).connect(c.destination);
+  o.start(t); o.stop(t + 0.14);
+}
+
+/* Build (or rebuild on resize) the marbles inside .j-jar. We hex-pack the
+   inscribed circle only to get a natural COUNT + bottom-first colour bands,
+   then hand the marbles to the physics sim. Skipped while hidden (mobile). */
 function buildJar() {
   const el = document.querySelector('.j-jar');
   if (!el) return;
@@ -161,12 +209,22 @@ function buildJar() {
       if (px * px + y * y <= packR * packR) pts.push({ x: px, y });
     }
   }
-  pts.sort((a, b) => b.y - a.y);      // bottom-first = fill order
+  pts.sort((a, b) => b.y - a.y);      // bottom-first = hex rest order (reduced-motion fallback)
 
-  const M = pts.length;
+  const M = Math.max(3, Math.min(pts.length, Math.round(pts.length * JAR.fillFrac)));
   const rand = rng(7);
-  jar = { el, S, entryY: -(S / 2) * 0.96, marbles: [] };
-  pts.forEach((p, o) => {
+  jar = {
+    el, S, r: mR,
+    R: S / 2 - S * JAR.wallFrac,                       // a marble centre stays within R - r of the middle
+    mouthY: -(S / 2 - S * JAR.wallFrac - mR) * 0.98,   // spawn just inside the top of the glass
+    all: [],                       // every marble
+    bands: [[], [], []],           // one queue per card colour (green · cyan · yellow)
+    bandNext: [0, 0, 0],           // how many of each band have been poured
+    active: [],                    // marbles currently in the sim
+    running: false, next: 0, acc: 0,
+  };
+  for (let o = 0; o < M; o++) {
+    const p = pts[o];
     const band = Math.min(2, Math.floor(o / (M / 3)));
     const m = document.createElement('div');
     m.className = 'j-marble';
@@ -175,35 +233,223 @@ function buildJar() {
     m.style.background =
       'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92), rgba(255,255,255,0) 44%), ' + JAR.colors[band];
     el.appendChild(m);
-    jar.marbles.push({ el: m, o, rx: p.x, ry: p.y, entryX: (rand() - 0.5) * S * JAR.spreadFrac });
-  });
+    const marble = { el: m, band, rx: p.x, ry: p.y, x: 0, y: 0, ox: 0, oy: 0, seed: rand() };
+    jar.all.push(marble);
+    jar.bands[band].push(marble);
+  }
   const glass = document.createElement('div');
   glass.className = 'j-glass';
   el.appendChild(glass);
-  placeMarbles(0);
+
+  if (reduced) fillJarStatic();       // no animation — just show the jar full
 }
 
-/* Fill level 0..1 for a given Journey progress q (0..cards). Each third rises
-   as its card enters, then holds — so a settled card reads exactly N/3 full. */
-function jarFill(q) {
-  let L = 0;
-  for (let j = 0; j < 3; j++) L += smooth(clamp((q - (j - JAR.pourOffset)) / JAR.pourSpan));
-  return clamp(L / 3);
+/* which card is on screen (0 green · 1 cyan · 2 yellow), from the Journey
+   scene progress. The active card flips at q = j − STEP_FADE/2 — the exact
+   point the cards cross-fade — so the pour colour hands over with the card. */
+function jarCard(f) {
+  const q = clamp(f - ST['Journey']) * 3;
+  let c = 0;
+  for (let j = 1; j < 3; j++) if (q >= j - STEP_FADE / 2) c = j;
+  return c;
 }
 
-/* Position every marble for a fill level L: marbles below the line have settled;
-   the few at the line are mid-drop (from the mouth); the rest wait, invisible. */
-function placeMarbles(L) {
+/* park every marble back at the mouth, invisible — an empty jar ready to pour */
+function resetJar() {
   if (!jar) return;
-  const M = jar.marbles.length;
-  for (const m of jar.marbles) {
-    const prog = clamp((L * M - m.o) / JAR.dropspan);
-    const e = ease(prog);
-    const x = lerp(m.entryX, m.rx, e);
-    const y = lerp(jar.entryY, m.ry, e);
-    m.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${lerp(0.5, 1, e).toFixed(3)})`;
-    m.el.style.opacity = prog <= 0 ? '0' : clamp(prog * 2.2).toFixed(3);
+  jar.active.length = 0;
+  jar.bandNext = [0, 0, 0];
+  jar.acc = 0;
+  jar.replay = false;
+  for (const m of jar.all) m.el.style.opacity = '0';
+}
+
+/* empty the jar and re-pour every band in order (green→cyan→yellow),
+   ignoring which card is on screen. Used by the GUI's Replay button and
+   whenever the marble size / fill is changed live. */
+function replayJar() {
+  if (!jar) return;
+  resetJar();
+  jar.replay = true;
+  jar.running = true;
+  jar.next = performance.now();
+}
+
+/* lowest band that still has marbles waiting at the mouth, else -1 */
+function firstUnfilledBand() {
+  for (let b = 0; b < 3; b++) if (jar.bandNext[b] < jar.bands[b].length) return b;
+  return -1;
+}
+
+/* drop the next queued marble of one band from the mouth, with a little
+   sideways scatter so the stream isn't a dead-straight column */
+function releaseFrom(band) {
+  const m = jar.bands[band][jar.bandNext[band]++];
+  const S = jar.S, h = 1 / 120;
+  const jx = (m.seed - 0.5) * S * JAR.spreadFrac;
+  m.x = jx; m.y = jar.mouthY;
+  m.ox = m.x - jx * 0.02;                 // faint horizontal drift into the jar
+  m.oy = m.y - JAR.drop * S * h;          // seed a downward velocity (Verlet: v = pos − prev)
+  m.el.style.opacity = '1';
+  jar.active.push(m);
+  marblePlink(jar.active.length / Math.max(1, jar.all.length));
+}
+
+/* one fixed-timestep physics substep: integrate under gravity, then relax
+   marble–marble overlaps and the round glass wall a few times (equal mass) */
+function jarSubstep(h) {
+  const g = JAR.gravity * jar.S * h * h;
+  const damp = JAR.damp, ms = jar.active, n = ms.length;
+  const minD = jar.r * 2, wall = jar.R - jar.r;
+  for (let i = 0; i < n; i++) {
+    const m = ms[i];
+    const vx = (m.x - m.ox) * damp, vy = (m.y - m.oy) * damp;
+    m.ox = m.x; m.oy = m.y;
+    m.x += vx; m.y += vy + g;
   }
+  for (let it = 0; it < JAR.iterations; it++) {
+    for (let i = 0; i < n; i++) {
+      const a = ms[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = ms[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < minD * minD && d2 > 1e-6) {
+          const d = Math.sqrt(d2), push = (minD - d) / d * 0.5;
+          dx *= push; dy *= push;
+          a.x -= dx; a.y -= dy; b.x += dx; b.y += dy;
+        }
+      }
+      const dd = Math.hypot(a.x, a.y);    // keep inside the round glass
+      if (dd > wall) { const k = wall / dd; a.x *= k; a.y *= k; }
+    }
+  }
+}
+
+/* write the settled positions to the DOM marbles */
+function renderMarbles() {
+  const ms = jar.active;
+  for (let i = 0; i < ms.length; i++) {
+    const m = ms[i];
+    m.el.style.transform = `translate(${m.x.toFixed(1)}px, ${m.y.toFixed(1)}px)`;
+  }
+}
+
+/* reduced-motion: no sim — drop every marble straight onto its hex rest spot */
+function fillJarStatic() {
+  jar.bandNext = jar.bands.map((b) => b.length);
+  jar.active = jar.all.slice();
+  for (const m of jar.all) {
+    m.x = m.ox = m.rx; m.y = m.oy = m.ry;
+    m.el.style.opacity = '1';
+    m.el.style.transform = `translate(${m.rx.toFixed(1)}px, ${m.ry.toFixed(1)}px)`;
+  }
+}
+
+/* Called every frame from the render loop. While the Journey section is on
+   screen it pours the CURRENT card's colour only — green on the green card,
+   cyan on the blue card, yellow on the yellow card — and steps the physics.
+   Leaving the section resets the jar so it fills fresh on the next visit. */
+function updateJar(dt, f) {
+  if (!jar || reduced) return;
+  const ji = ST['Journey'];
+  const onSection = f > ji - 0.08 && f < ji + 1.0;
+  if (onSection && !jar.running) { jar.running = true; jar.next = performance.now(); }
+  else if (!onSection && jar.running) { jar.running = false; resetJar(); return; }
+  if (!jar.running) return;
+
+  const now = performance.now();
+  // normal: pour only the on-screen card's colour. replay: pour every band in order.
+  const card = jar.replay ? firstUnfilledBand() : jarCard(f);
+  if (jar.replay && card < 0) jar.replay = false;     // all bands re-poured
+  const q = card >= 0 ? jar.bands[card] : null, p = jar.bandNext;
+  let rel = 0;
+  while (q && p[card] < q.length && now >= jar.next && rel < 4) { releaseFrom(card); jar.next += JAR.releaseMs; rel++; }
+  if (now - jar.next > 500) jar.next = now;           // recovered from a stall — don't dump the backlog at once
+
+  const h = 1 / 120;
+  jar.acc = Math.min(jar.acc + dt, 0.1);
+  let steps = 0;
+  while (jar.acc >= h && steps < 12) { jarSubstep(h); jar.acc -= h; steps++; }
+  renderMarbles();
+}
+
+/* ── Jar GUI ───────────────────────────────────────────────────────
+   Live controls for the marble jar. "Marble size" rebuilds the jar with a
+   new radius but the same fill height (the poured count scales with size, so
+   the filled area is unchanged). "Fill" sets how full it pours. "Replay"
+   empties and re-pours. Changing a slider rebuilds + replays so you see it
+   immediately. Toggle the panel with M. Scroll to the Journey section to
+   watch. Remove the buildJarGUI() call in init to ship. */
+function buildJarGUI() {
+  if (document.getElementById('jarGUI')) return;
+
+  const rebuild = () => { jar = null; buildJar(); replayJar(); };
+
+  const panel = document.createElement('div');
+  panel.id = 'jarGUI';
+  panel.style.cssText = 'position:fixed;right:16px;top:16px;z-index:99999;width:230px;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;';
+  const title = document.createElement('span'); title.textContent = 'Marble jar';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press M)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  bar.append(title, hide);
+  panel.appendChild(bar);
+
+  // one labelled slider bound to a JAR key; onDone runs after the value changes
+  const slider = (label, key, min, max, step, onDone) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:8px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    const fmt = (v) => (step < 1 ? v.toFixed(step < 0.01 ? 3 : 2) : v.toFixed(0));
+    val.textContent = fmt(JAR[key]);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = JAR[key];
+    inp.style.cssText = 'width:100%;margin-top:3px;accent-color:#26BDE2;cursor:pointer;';
+    inp.oninput = () => { JAR[key] = parseFloat(inp.value); val.textContent = fmt(JAR[key]); };
+    inp.onchange = onDone;            // rebuild on release, not on every pixel
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+  };
+
+  slider('Marble size', 'rFrac', 0.02, 0.09, 0.001, rebuild);
+  slider('Fill',        'fillFrac', 0.4, 1.0, 0.01, rebuild);
+
+  // sound toggle
+  const sndRow = document.createElement('label');
+  sndRow.style.cssText = 'display:flex;align-items:center;gap:7px;margin:10px 0 4px;cursor:pointer;';
+  const snd = document.createElement('input');
+  snd.type = 'checkbox'; snd.checked = JAR.sound;
+  snd.style.cssText = 'accent-color:#26BDE2;cursor:pointer;';
+  snd.onchange = () => { JAR.sound = snd.checked; };
+  const sndCap = document.createElement('span'); sndCap.textContent = 'Marble sound';
+  sndRow.append(snd, sndCap);
+  panel.appendChild(sndRow);
+
+  // replay button
+  const replay = document.createElement('button');
+  replay.textContent = '↻ Replay pour';
+  replay.style.cssText = 'all:unset;display:block;text-align:center;cursor:pointer;margin-top:9px;padding:7px 0;' +
+    'border-radius:7px;background:rgba(38,189,226,.22);color:#bfeaf6;font-weight:600;';
+  replay.onmouseenter = () => (replay.style.background = 'rgba(38,189,226,.34)');
+  replay.onmouseleave = () => (replay.style.background = 'rgba(38,189,226,.22)');
+  replay.onclick = () => replayJar();
+  panel.appendChild(replay);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'm' || e.key === 'M') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
 }
 
 /* Set the Cross-scene height (vh) — the scroll length of the dedicated
@@ -1990,7 +2236,7 @@ function onScroll(fOverride) {
      the crossing screen takes over, and the dashboard climbs in from below
      over the Cross tail. The dots carry the continuity across both. */
   const crossI = ST['Cross'], dashI = ST['Dashboard'], skillsI = ST['12 skills'], onTrackI = skillsI + 1;
-  const aiI = ST['Ask-Tilli'], askLiveI = ST['Ask-live'], impactI = ST['Impact'];
+  const aiI = ST['Ask-Tilli'], askLiveI = ST['Ask-live'], impactI = ST['Impact'], journeyI = ST['Journey'];
   /* The dots now CROSS PATHS IN FRONT of the hero text. The hero stays
      centred (no ride-up) and simply fades out as the two streams sweep over
      it, while the whole dot field is lifted above the page content for the
@@ -2089,9 +2335,13 @@ function onScroll(fOverride) {
     } else if (k === impactI) {
       /* "30+ schools…" — the stage is held opaque across the Ask-live→Impact
          boundary while #impactCard does the reveal (fade in + scale up + unblur,
-         0.2s after Ask-live has blurred away — CSS drives that pause). It then
-         cross-fades out to Journey normally at its own tail. */
-      const toJourney = smooth(clamp((f - (impactI + 1 - FADE_LEN)) / FADE_LEN));
+         0.2s after Ask-live has blurred away — CSS drives that pause). On the way
+         OUT to Journey it uses the SAME soft, symmetric cross-fade as the
+         30+→"every morning" step swap: a STEP_FADE-wide window centred on the
+         boundary, so it dissolves straight into "What our partner schools did"
+         without dipping through the white background (see the journeyI branch). */
+      const XFADE = STEP_FADE;
+      const toJourney = smooth(clamp((f - (journeyI - XFADE / 2)) / XFADE));
       op = smooth(clamp((f - (impactI - 0.45)) / 0.2)) * (1 - toJourney);
       if (impactCardEl) impactCardEl.classList.toggle('in', f > impactI - 0.06 && toJourney < 0.9);
       // dot-ring rise into the carousel card (step 1 → step 2) — see ORBIT_* above
@@ -2103,6 +2353,16 @@ function onScroll(fOverride) {
         oc.offY = orbitBaseY + rise * (window.__orbitRise.topY - orbitBaseY);
         oc.rotX = orbitBaseRotX + rise * (window.__orbitRise.rotTopX - orbitBaseRotX);
       }
+    } else if (k === journeyI) {
+      /* "What our partner schools did" fades IN with the exact mirror of the
+         Impact fade-out above — the same STEP_FADE-wide window centred on the
+         boundary — so the two stages cross-dissolve like the 30+→"every morning"
+         step swap (they sum to 1 through the crossover, no white flash). Then a
+         normal FADE_LEN cross-fade out to "Let's talk" at its own tail. */
+      const XFADE = STEP_FADE;
+      const cin = smooth(clamp((f - (journeyI - XFADE / 2)) / XFADE));
+      const toTalk = smooth(clamp((f - (journeyI + 1 - FADE_LEN)) / FADE_LEN));
+      op = cin * (1 - toTalk);
     }
     if (sc.stage) {
       const tStr = (tx || ty || exScale !== 1)
@@ -2122,7 +2382,27 @@ function onScroll(fOverride) {
     if (!sc.stage || op < 0.004) return;
 
     const n = sc.steps.length;
-    if (n) {
+    if (n && sc.pin === 'journey' && !reduced) {
+      /* CARD FLIP — instead of cross-fading, each Journey card rotates on its
+         own Y axis. The outgoing card turns edge-on and vanishes at 90° (its
+         backface is hidden); the incoming card swings in from −90°. Each flip
+         is centred on the SAME crossover the old fade used (qc = j+1 − STEP_FADE/2)
+         so it still lines up with the step pills. Pure rotateY — no scale, no
+         opacity fade, no X/Z motion (see the .j-card CSS for perspective). */
+      const q = clamp(f - k) * n;
+      sc.steps.forEach((st, j) => {
+        const qi = j - STEP_FADE / 2;            // flip-IN crossover (card j−1 → j)
+        const qo = j + 1 - STEP_FADE / 2;        // flip-OUT crossover (card j → j+1)
+        const inRot  = j === 0     ? 0 : -90 + 90 * smooth(clamp((q - (qi - FLIP_SPAN / 2)) / FLIP_SPAN, 0, 1));
+        const outRot = j === n - 1 ? 0 :         90 * smooth(clamp((q - (qo - FLIP_SPAN / 2)) / FLIP_SPAN, 0, 1));
+        const deg = inRot + outRot;              // −90 (waiting) → 0 (facing) → +90 (flipped away)
+        const card = st._card || (st._card = st.querySelector('.j-card'));
+        if (card) card.style.transform = `rotateY(${deg.toFixed(2)}deg)`;
+        const shown = Math.abs(deg) < 89.5;      // gone once edge-on/backface — not an opacity fade
+        st.style.opacity = shown ? '1' : '0';
+        st.style.pointerEvents = Math.abs(deg) < 45 ? 'auto' : 'none';
+      });
+    } else if (n) {
       const q = clamp(f - k) * n;
       sc.steps.forEach((st, j) => {
         const inn = j === 0 ? 1 : smooth(clamp((q - (j - STEP_FADE)) / STEP_FADE));
@@ -2291,9 +2571,20 @@ function runPin(sc, p) {
     return;
   }
   if (sc.pin === 'journey') {
-    /* q = 0..(#cards); jarFill turns it into a 0..1 level that lands on 1/3,
-       2/3, 3/3 as Measure, Ask and Intervene each settle. */
-    if (jar) placeMarbles(jarFill(p * sc.steps.length));
+    /* The jar is no longer scroll-driven — it streams + simulates in the
+       frame loop (updateJar), starting the instant the section lands and
+       running until you leave it. */
+    /* Step indicators: light the pill for whichever card is on screen. The
+       card swap crosses over at q = j − STEP_FADE/2 (same point the steps
+       cross-fade), so the active pill flips exactly as the next card takes
+       over. */
+    const pills = sc._pills || (sc._pills = sc.el.querySelectorAll('.j-step-pill'));
+    if (pills.length) {
+      const n = sc.steps.length, q = clamp(p) * n;
+      let active = 0;
+      for (let j = 1; j < n; j++) if (q >= j - STEP_FADE / 2) active = j;
+      pills.forEach((pill, j) => pill.classList.toggle('on', j === active));
+    }
     return;
   }
 }
@@ -2452,6 +2743,7 @@ if (reduced) {
     renderF += (rawF - renderF) * (1 - Math.exp(-dt * SNAP.fieldLag));
     if (Math.abs(rawF - renderF) < 0.0004) renderF = rawF;
     f = onScroll(renderF);
+    updateJar(dt, f);   // Journey marble pour + physics (see buildJar)
 
     if (!three) { return; }
     const th = three;
@@ -3129,6 +3421,7 @@ if (reduced) {
   // buildImpactGUI();            // "30+ schools" text mover (toggle with I, or drag on page)
   // buildStep2GUI();             // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
   // buildJourneyGUI();           // Journey: heading position/scale + jar offset/size (toggle with J)
+  // buildJarGUI();               // Marble jar: marble size + fill + sound + replay (toggle with M)
 }
 
 /* ── Impact step-2 GUI ────────────────────────────────────────────────

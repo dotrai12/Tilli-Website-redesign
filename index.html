@@ -252,9 +252,27 @@
     box-shadow: inset -3px -4px 6px rgba(20,20,20,0.22), inset 2px 2px 4px rgba(255,255,255,0.45), 0 2px 5px rgba(20,20,20,0.14); }
   .j-glass { position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
     background: radial-gradient(circle at 34% 25%, rgba(255,255,255,0.55), rgba(255,255,255,0) 40%); }
+  /* step indicators — sit centred under the card column (mirrors the card's
+     right-aligned width so they line up beneath it) */
+  .j-steps { position: absolute; right: 6vw; width: min(660px, 52vw); bottom: 8vh;
+    display: flex; justify-content: center; gap: 14px; pointer-events: none; z-index: 4; }
+  .j-step-pill { font-size: min(15px, 2vh); font-weight: 600; letter-spacing: -0.01em;
+    color: var(--tl-ink-300); background: #fff; border: 2px solid #C7CDD8;
+    border-radius: 13px; padding: 8px 18px; white-space: nowrap;
+    transition: color .35s ease, border-color .35s ease, background .35s ease,
+      box-shadow .35s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
+  .j-step-pill.on { color: var(--ct); border-color: var(--c);
+    background: color-mix(in srgb, var(--c) 13%, #fff); font-weight: 700;
+    transform: scale(1.06); box-shadow: 0 6px 16px color-mix(in srgb, var(--c) 34%, transparent); }
+  @media (max-width: 1080px) {
+    .j-steps { right: 0; left: 0; width: auto; bottom: 5vh; }
+  }
   .j-stage .step { justify-content: flex-end; }
-  .j-stage .step-in { width: min(660px, 52vw); margin-right: 6vw; }
-  .j-card { background: #fff; border-radius: 24px; padding: 32px; display: flex; gap: 28px; align-items: center; box-shadow: 0 2px 10px rgba(20,20,20,0.05); }
+  /* perspective on the card wrapper (origin = card centre) so the Y-axis flip
+     reads as real 3D depth, not a flat squash */
+  .j-stage .step-in { width: min(660px, 52vw); margin-right: 6vw; perspective: 1400px; }
+  .j-card { background: #fff; border-radius: 24px; padding: 32px; display: flex; gap: 28px; align-items: center; box-shadow: 0 2px 10px rgba(20,20,20,0.05);
+    transform-origin: center center; backface-visibility: hidden; -webkit-backface-visibility: hidden; will-change: transform; }
 
   /* ── Footer strip on the closing stage ────────────────────── */
   .foot { position: absolute; left: 0; right: 0; bottom: 0; border-top: 1px solid var(--tl-line-200); padding: 20px 24px; background: rgba(255,255,255,0.92); pointer-events: auto; }
@@ -826,6 +844,13 @@
       <h2 class="j-heading" style="--x:256px; --y:96px; --sc:1.23;">What our partner schools did</h2>
       <!-- spherical jar to the left of the cards · size + offset tunable (press J) -->
       <div class="j-jar" style="--jx:43px; --jy:-3px; --jsize:435px;"></div>
+      <!-- step indicators under the cards — the pill for the card on screen goes
+           active (its colour); the others sit grey. main.js toggles .on. -->
+      <div class="j-steps">
+        <div class="j-step-pill" style="--c:#56C02B; --ct:#348C11;">1 - Measure</div>
+        <div class="j-step-pill" style="--c:#26BDE2; --ct:#0F94B5;">2 - Ask</div>
+        <div class="j-step-pill" style="--c:#F0B400; --ct:#C79600;">3 - Intervene</div>
+      </div>
     </div>
 
     <div class="step">
