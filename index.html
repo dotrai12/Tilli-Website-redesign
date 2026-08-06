@@ -228,9 +228,30 @@
   .skill-card .n { font-weight: 800; font-size: 15px; }
   .skill-card .d { font-size: 12.5px; line-height: 1.45; margin-top: 4px; color: var(--tl-ink-500); }
 
-  /* ── Journey: a fixed dotted spine on the left, cards fade
-        through it on the right ──────────────────────────────── */
-  .j-deco { position: absolute; left: 6vw; top: 0; bottom: 0; width: 320px; display: flex; flex-direction: column; justify-content: center; gap: 26px; }
+  /* ── Journey: a top-centre heading + a glass jar on the left,
+        cards fade through on the right ───────────────────────── */
+  /* heading sits pinned at top-centre; --x/--y/--sc are baked from the GUI (press J) */
+  .j-heading { position: absolute; top: 5vh; left: 50%; margin: 0; text-align: center;
+    font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900);
+    transform: translate(-50%, 0) translate(var(--x, 0px), var(--y, 0px)) scale(var(--sc, 1));
+    transform-origin: top center; }
+  /* spherical glass jar on the left of the cards; --jx/--jy offset, --jsize diameter */
+  .j-jar { position: absolute; left: 6vw; top: 50%;
+    width: var(--jsize, 300px); height: var(--jsize, 300px); border-radius: 50%;
+    transform: translate(var(--jx, 0px), calc(-50% + var(--jy, 0px)));
+    background:
+      radial-gradient(circle at 34% 28%, rgba(255,255,255,0.95), rgba(255,255,255,0) 46%),
+      radial-gradient(circle at 70% 78%, rgba(38,189,226,0.18), rgba(38,189,226,0.04) 62%),
+      rgba(255,255,255,0.30);
+    border: 2px solid var(--tl-line-200);
+    overflow: hidden;   /* clips the marbles to the round glass */
+    box-shadow: inset -16px -22px 46px rgba(20,20,20,0.06), inset 14px 16px 30px rgba(255,255,255,0.5), 0 20px 46px rgba(20,20,20,0.08); }
+  /* marbles + top sheen are injected into .j-jar by buildJar() in main.js */
+  .j-marble { position: absolute; left: 50%; top: 50%; border-radius: 50%; opacity: 0;
+    will-change: transform, opacity;
+    box-shadow: inset -3px -4px 6px rgba(20,20,20,0.22), inset 2px 2px 4px rgba(255,255,255,0.45), 0 2px 5px rgba(20,20,20,0.14); }
+  .j-glass { position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle at 34% 25%, rgba(255,255,255,0.55), rgba(255,255,255,0) 40%); }
   .j-stage .step { justify-content: flex-end; }
   .j-stage .step-in { width: min(660px, 52vw); margin-right: 6vw; }
   .j-card { background: #fff; border-radius: 24px; padding: 32px; display: flex; gap: 28px; align-items: center; box-shadow: 0 2px 10px rgba(20,20,20,0.05); }
@@ -240,7 +261,8 @@
 
   /* ── Responsive ───────────────────────────────────────────── */
   @media (max-width: 1080px) {
-    .j-deco { display: none; }
+    .j-heading { position: static; transform: scale(var(--sc, 1)); margin: 0 auto 8px; }
+    .j-jar { display: none; }
     .j-stage .step { justify-content: center; }
     .j-stage .step-in { width: 100%; max-width: 660px; margin-right: 0; }
   }
@@ -800,16 +822,10 @@
 <div class="scene" data-scene data-wash="255,255,255" data-label="Journey" data-pin="journey" style="height: 330vh;">
   <div class="stage j-stage">
     <div class="stage-deco">
-      <div class="j-deco">
-        <div>
-          <div class="eyebrow">WHAT PARTNER SCHOOLS DID</div>
-          <h2 style="font-size: min(40px, 5vh); font-weight: 800; letter-spacing: -0.02em; color: var(--tl-ink-900); margin: 14px 0 0;">Measure. Ask. <span style="color: var(--tl-orange-500);">Intervene.</span></h2>
-        </div>
-        <svg viewBox="0 0 120 560" style="width: 120px; height: min(46vh, 380px);" preserveAspectRatio="xMidYMid meet">
-          <path data-j-path d="M60 20 C 8 130 112 200 60 290 C 8 380 112 450 60 540" fill="none" stroke="#DDE1E8" stroke-width="3" stroke-dasharray="1 10" stroke-linecap="round"></path>
-          <circle data-j-ball cx="0" cy="0" r="13" fill="var(--tl-yellow-500)" stroke="var(--tl-ink-900)" stroke-width="2.5"></circle>
-        </svg>
-      </div>
+      <!-- top-centre heading · position + scale tunable in the GUI (press J) -->
+      <h2 class="j-heading" style="--x:256px; --y:96px; --sc:1.23;">What our partner schools did</h2>
+      <!-- spherical jar to the left of the cards · size + offset tunable (press J) -->
+      <div class="j-jar" style="--jx:43px; --jy:-3px; --jsize:435px;"></div>
     </div>
 
     <div class="step">
@@ -864,23 +880,6 @@
             <img src="assets/ds/feelings-time-1.png" alt="Feelings Time workbook" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
             <img src="assets/ds/guidebook-l1.png" alt="Teacher's Guidebook" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12); margin-bottom: 16px;">
             <img src="assets/ds/my-first-feelings-book.png" alt="My First Feelings Book" style="width: 96px; border-radius: 8px; box-shadow: 0 8px 22px rgba(20,20,20,0.12);">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-in">
-        <div style="text-align: center;">
-          <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap;" id="tabs">
-            <span data-tab="0" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Measure</span>
-            <span data-tab="1" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Ask</span>
-            <span data-tab="2" style="padding: 11px 28px; border-radius: 999px; font-size: 15px; font-weight: 700; cursor: pointer; border: 1.5px solid var(--tl-line-200);">Intervene</span>
-          </div>
-          <div style="background: #fff; border: 1px solid var(--tl-line-200); border-radius: 24px; padding: 36px 40px; min-height: 130px; text-align: left;">
-            <div data-tabpane style="font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Baseline → midline → endline. 12 skills, three angles, three times a year — and dashboards update the moment data lands.</div>
-            <div data-tabpane style="display: none; font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">Ask-Tilli answers teachers' day-to-day questions with each child's own data — lesson plans, behaviour guidance, class summaries. On WhatsApp, in seconds.</div>
-            <div data-tabpane style="display: none; font-size: min(20px, 2.7vh); font-weight: 600; line-height: 1.6; color: var(--tl-ink-700);">A 36-week play-based curriculum mapped to the same 12 skills you measure — 30 minutes a week, workbooks and guidebooks included.</div>
           </div>
         </div>
       </div>

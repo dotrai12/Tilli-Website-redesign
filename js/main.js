@@ -104,6 +104,7 @@ function measure() {
     s.len = Math.max(1, i === LAST ? h - vh : h);
   });
   fitSteps();
+  buildJar();
 }
 
 /* Stages are viewport-locked, so a step that is taller than the screen
@@ -118,6 +119,91 @@ function fitSteps() {
     const k = h > avail ? Math.max(0.5, avail / h) : 1;
     inner.style.transform = k < 1 ? `scale(${k.toFixed(4)})` : 'none';
   }));
+}
+
+/* ── Journey jar: marbles that pour in a third per card ──────────────
+   The glass sphere on the left of the Journey cards is a "jar". Each of
+   the three cards (Measure · Ask · Intervene) fills it one third — the
+   marbles for that third are that stage's colour and drop in from the
+   jar's mouth as the card arrives, settling bottom-up. Tunables: */
+const JAR = {
+  rFrac:      0.043,  // marble radius as a fraction of the jar diameter
+  gap:        1.08,   // centre-to-centre spacing (× marble diameter) — >1 leaves air
+  wallFrac:   0.05,   // inset from the glass wall (fraction of diameter)
+  dropspan:   4.5,    // how many marbles are mid-drop at once (bigger = softer cascade)
+  pourSpan:   0.5,    // scroll-length (in cards) each third takes to pour
+  pourOffset: 0.35,   // how early a third finishes pouring vs its card centring
+  spreadFrac: 0.05,   // width of the pour "stream" at the mouth (fraction of diameter)
+  colors:     ['#56C02B', '#26BDE2', '#FCC30B'],  // Measure green · Ask cyan · Intervene yellow
+};
+let jar = null;   // { el, S, marbles:[{el,o,rx,ry,entryX}], entryY }
+
+/* Build (or rebuild on resize) the marble field inside .j-jar. Marbles are
+   hex-packed inside the inscribed circle, sorted bottom-first, and split into
+   three colour bands — one per card. Skipped while the jar is hidden (mobile). */
+function buildJar() {
+  const el = document.querySelector('.j-jar');
+  if (!el) return;
+  const S = el.getBoundingClientRect().width;
+  if (S < 40) return;                 // display:none under 1080px — nothing to build
+  if (jar && jar.S === S) return;     // already built at this size
+  el.innerHTML = '';
+
+  const mR = S * JAR.rFrac;
+  const packR = S / 2 - (mR + S * JAR.wallFrac);
+  const d = mR * 2 * JAR.gap;
+  const rowH = d * Math.sqrt(3) / 2;
+  const pts = [];
+  for (let y = -Math.floor(packR / rowH) * rowH, row = 0; y <= packR; y += rowH, row++) {
+    const off = (row & 1) ? d / 2 : 0;
+    for (let x = -packR; x <= packR; x += d) {
+      const px = x + off;
+      if (px * px + y * y <= packR * packR) pts.push({ x: px, y });
+    }
+  }
+  pts.sort((a, b) => b.y - a.y);      // bottom-first = fill order
+
+  const M = pts.length;
+  const rand = rng(7);
+  jar = { el, S, entryY: -(S / 2) * 0.96, marbles: [] };
+  pts.forEach((p, o) => {
+    const band = Math.min(2, Math.floor(o / (M / 3)));
+    const m = document.createElement('div');
+    m.className = 'j-marble';
+    m.style.width = m.style.height = (mR * 2).toFixed(1) + 'px';
+    m.style.marginLeft = m.style.marginTop = (-mR).toFixed(1) + 'px';
+    m.style.background =
+      'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92), rgba(255,255,255,0) 44%), ' + JAR.colors[band];
+    el.appendChild(m);
+    jar.marbles.push({ el: m, o, rx: p.x, ry: p.y, entryX: (rand() - 0.5) * S * JAR.spreadFrac });
+  });
+  const glass = document.createElement('div');
+  glass.className = 'j-glass';
+  el.appendChild(glass);
+  placeMarbles(0);
+}
+
+/* Fill level 0..1 for a given Journey progress q (0..cards). Each third rises
+   as its card enters, then holds — so a settled card reads exactly N/3 full. */
+function jarFill(q) {
+  let L = 0;
+  for (let j = 0; j < 3; j++) L += smooth(clamp((q - (j - JAR.pourOffset)) / JAR.pourSpan));
+  return clamp(L / 3);
+}
+
+/* Position every marble for a fill level L: marbles below the line have settled;
+   the few at the line are mid-drop (from the mouth); the rest wait, invisible. */
+function placeMarbles(L) {
+  if (!jar) return;
+  const M = jar.marbles.length;
+  for (const m of jar.marbles) {
+    const prog = clamp((L * M - m.o) / JAR.dropspan);
+    const e = ease(prog);
+    const x = lerp(m.entryX, m.rx, e);
+    const y = lerp(jar.entryY, m.ry, e);
+    m.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${lerp(0.5, 1, e).toFixed(3)})`;
+    m.el.style.opacity = prog <= 0 ? '0' : clamp(prog * 2.2).toFixed(3);
+  }
 }
 
 /* Set the Cross-scene height (vh) — the scroll length of the dedicated
@@ -1834,17 +1920,6 @@ function countUp() {
 if (reduced) counted = true;
 else statEl.textContent = '0';
 
-const tabBtns = Array.from(document.querySelectorAll('[data-tab]'));
-const tabPanes = Array.from(document.querySelectorAll('[data-tabpane]'));
-const TAB_ON = { background: '#FFF6A8', borderColor: '#141414', color: '#141414' };
-const TAB_OFF = { background: '#fff', borderColor: 'var(--tl-line-200)', color: '#545454' };
-function setTab(i) {
-  tabBtns.forEach((b, k) => Object.assign(b.style, k === i ? TAB_ON : TAB_OFF));
-  tabPanes.forEach((p, k) => { p.style.display = k === i ? 'block' : 'none'; });
-}
-tabBtns.forEach((b, i) => b.addEventListener('click', () => setTab(i)));
-setTab(0);
-
 function pinTargets(sc) {
   if (sc.t) return sc.t;
   const q = (s) => sc.el.querySelector(s);
@@ -1862,10 +1937,6 @@ function pinTargets(sc) {
   };
   return sc.t;
 }
-
-const jPath = document.querySelector('[data-j-path]');
-const jBall = document.querySelector('[data-j-ball]');
-let jLen = 0;
 
 /* 3 VIEWS text labels — line each one up horizontally UNDER its orb (world x
    ±9 / 0, matched via the same viewport perspective the orbs use), and let each
@@ -2219,10 +2290,11 @@ function runPin(sc, p) {
     if (three) three.dnaP = p;
     return;
   }
-  if (sc.pin === 'journey' && jPath && jBall) {
-    if (!jLen) jLen = jPath.getTotalLength();
-    const pt = jPath.getPointAtLength(jLen * smooth(p));
-    jBall.setAttribute('transform', `translate(${pt.x}, ${pt.y})`);
+  if (sc.pin === 'journey') {
+    /* q = 0..(#cards); jarFill turns it into a 0..1 level that lands on 1/3,
+       2/3, 3/3 as Measure, Ask and Intervene each settle. */
+    if (jar) placeMarbles(jarFill(p * sc.steps.length));
+    return;
   }
 }
 
@@ -2976,9 +3048,10 @@ if (reduced) {
        cursor swarm, no re-forming. */
     if (ST['Ask-live'] != null) {
       if (si === ST['Ask-live'])    th.dotMat.opacity = DOT_OPACITY * (1 - smooth(clamp((S.p - 0.82) / 0.16)));
-      /* Impact is now a clean card (no dot swirl) — keep the field hidden through
-         it, fading back in only over the tail so it's ready for Journey. */
-      else if (si === ST['Impact']) th.dotMat.opacity = DOT_OPACITY * smooth(clamp((S.p - 0.85) / 0.12));
+      /* Impact, Journey and Let's-talk are all clean card layouts now — the field
+         stays fully hidden from Impact onward, so the heart never re-forms behind
+         the Journey cards (or the closing CTA). */
+      else if (si >= ST['Impact']) th.dotMat.opacity = 0;
       else                          th.dotMat.opacity = DOT_OPACITY;
     }
 
@@ -3054,7 +3127,8 @@ if (reduced) {
   // buildTuneGUI(() => three);   // kids walk-in bake (toggle with G)
   // buildAskLiveGUI();           // Ask-live carry/plug + prompt-colour controls (toggle with W)
   // buildImpactGUI();            // "30+ schools" text mover (toggle with I, or drag on page)
-  buildStep2GUI();                // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
+  // buildStep2GUI();             // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
+  // buildJourneyGUI();           // Journey: heading position/scale + jar offset/size (toggle with J)
 }
 
 /* ── Impact step-2 GUI ────────────────────────────────────────────────
@@ -3215,6 +3289,130 @@ function buildStep2GUI() {
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
     if (e.key === 'k' || e.key === 'K') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
+}
+
+/* ── Journey GUI ──────────────────────────────────────────────────────
+   Live tuning for the "What our partner schools did" scene: X / Y / scale
+   for the top-centre heading, and X / Y / size for the glass jar on the
+   left. Both write inline CSS vars (--x/--y/--sc, --jx/--jy/--jsize) so the
+   look can be baked straight into the markup. Drag the heading on the page
+   too. "Log values" dumps both elements' inline styles. Toggle with J. */
+function buildJourneyGUI() {
+  if (document.getElementById('journeyGUI')) return;
+  const headEl = document.querySelector('.j-heading');
+  const jarEl  = document.querySelector('.j-jar');
+  if (!headEl || !jarEl) return;
+
+  const ROWS = [
+    ['sec', '— Heading · drag on page —'],
+    ['var', 'X',     headEl, '--x',  -900, 900, 1,    'px', 0],
+    ['var', 'Y',     headEl, '--y',  -400, 600, 1,    'px', 0],
+    ['var', 'Scale', headEl, '--sc',  0.4,   3, 0.01, '',   1],
+    ['sec', '— Jar —'],
+    ['var', 'X',     jarEl,  '--jx',    -600, 900, 1, 'px', 0],
+    ['var', 'Y',     jarEl,  '--jy',    -500, 500, 1, 'px', 0],
+    ['var', 'Size',  jarEl,  '--jsize',   60, 700, 1, 'px', 300],
+  ];
+  const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
+
+  const panel = document.createElement('div');
+  panel.id = 'journeyGUI';
+  panel.style.cssText = 'position:fixed;right:16px;top:16px;z-index:99999;width:230px;max-height:92vh;overflow:auto;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;';
+  const title = document.createElement('span'); title.textContent = 'Journey heading + jar';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press J)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  bar.append(title, hide);
+  panel.appendChild(bar);
+
+  // registry so page-drags can sync the matching X/Y sliders: key = el + cssVar
+  const varInputs = new Map();
+  const keyOf = (el, css) => (el.dataset.jg || (el.dataset.jg = String(Math.random()).slice(2))) + css;
+
+  ROWS.forEach((r) => {
+    if (r[0] === 'sec') {
+      const s = document.createElement('div');
+      s.textContent = r[1];
+      s.style.cssText = 'margin:11px 0 2px;color:#8f8fa0;font-size:11px;';
+      panel.appendChild(s);
+      return;
+    }
+    const [, label, target, key, min, max, step, unit, init] = r;
+    // read the element's current (baked) var so opening the GUI never clobbers it
+    const raw = target.style.getPropertyValue(key) || getComputedStyle(target).getPropertyValue(key);
+    const n = parseFloat(raw);
+    const cur = isNaN(n) ? (init != null ? init : 0) : n;
+    target.style.setProperty(key, cur + unit);
+
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:6px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    val.textContent = fmt(cur, step);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = cur;
+    inp.style.cssText = 'width:100%;margin-top:3px;accent-color:#26BDE2;cursor:pointer;';
+    inp.oninput = () => {
+      const v = parseFloat(inp.value);
+      target.style.setProperty(key, v + unit);
+      val.textContent = fmt(v, step);
+    };
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+    varInputs.set(keyOf(target, key), { inp, val, step });
+  });
+
+  /* drag the heading directly on the page → updates its --x/--y + sliders */
+  {
+    const el = headEl;
+    el.style.cursor = 'grab'; el.style.pointerEvents = 'auto';
+    let d = null;
+    const sync = (css, v) => {
+      const rec = varInputs.get(keyOf(el, css));
+      if (rec) { rec.inp.value = v; rec.val.textContent = fmt(v, rec.step); }
+    };
+    el.addEventListener('pointerdown', (e) => {
+      d = { x: e.clientX, y: e.clientY,
+            ox: parseFloat(el.style.getPropertyValue('--x')) || 0,
+            oy: parseFloat(el.style.getPropertyValue('--y')) || 0 };
+      el.setPointerCapture(e.pointerId); el.style.cursor = 'grabbing'; e.preventDefault();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!d) return;
+      const nx = Math.round(d.ox + (e.clientX - d.x)), ny = Math.round(d.oy + (e.clientY - d.y));
+      el.style.setProperty('--x', nx + 'px'); el.style.setProperty('--y', ny + 'px');
+      sync('--x', nx); sync('--y', ny);
+    });
+    const end = () => { if (d) { d = null; el.style.cursor = 'grab'; } };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+
+  const logBtn = document.createElement('button');
+  logBtn.textContent = 'Log values';
+  logBtn.style.cssText = 'all:unset;display:block;text-align:center;cursor:pointer;margin-top:11px;padding:6px 0;' +
+    'border-radius:7px;background:rgba(255,255,255,.09);';
+  logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
+  logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
+  logBtn.onclick = () => {
+    console.log('Heading →', headEl.getAttribute('style'));
+    console.log('Jar →', jarEl.getAttribute('style'));
+  };
+  panel.appendChild(logBtn);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'j' || e.key === 'J') panel.style.display = panel.style.display === 'none' ? '' : 'none';
   });
 }
 
