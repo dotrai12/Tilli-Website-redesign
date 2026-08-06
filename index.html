@@ -251,10 +251,14 @@
     border: 2px solid var(--tl-line-200);
     overflow: hidden;   /* clips the marbles to the round glass */
     box-shadow: inset -16px -22px 46px rgba(20,20,20,0.06), inset 14px 16px 30px rgba(255,255,255,0.5), 0 20px 46px rgba(20,20,20,0.08); }
-  /* marbles + top sheen are injected into .j-jar by buildJar() in main.js */
+  /* marbles + top sheen are injected into .j-jar by buildJar() in main.js.
+     Flat, solid-fill discs (no sphere shading) so they read like the paint-dot
+     art style. The soft drop shadow (no inset sphere highlight) just separates
+     touching dots; it matches the canvas shadow the burst uses, so the DOM→canvas
+     hand-off is seamless. */
   .j-marble { position: absolute; left: 50%; top: 50%; border-radius: 50%; opacity: 0;
     will-change: transform, opacity;
-    box-shadow: inset -3px -4px 6px rgba(20,20,20,0.22), inset 2px 2px 4px rgba(255,255,255,0.45), 0 2px 5px rgba(20,20,20,0.14); }
+    box-shadow: 1px 2.5px 5px rgba(24,32,44,0.30); }
   .j-glass { position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
     background: radial-gradient(circle at 34% 25%, rgba(255,255,255,0.55), rgba(255,255,255,0) 40%); }
   /* step indicators — sit centred under the card column (mirrors the card's

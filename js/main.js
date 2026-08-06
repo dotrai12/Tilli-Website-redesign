@@ -231,8 +231,7 @@ function buildJar() {
     m.className = 'j-marble';
     m.style.width = m.style.height = (mR * 2).toFixed(1) + 'px';
     m.style.marginLeft = m.style.marginTop = (-mR).toFixed(1) + 'px';
-    m.style.background =
-      'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92), rgba(255,255,255,0) 44%), ' + JAR.colors[band];
+    m.style.background = JAR.colors[band];   // flat solid fill — paint-dot art style
     el.appendChild(m);
     const marble = { el: m, band, rx: p.x, ry: p.y, x: 0, y: 0, ox: 0, oy: 0, seed: rand() };
     jar.all.push(marble);
@@ -476,7 +475,12 @@ const BURST = {
   ringW:     0.36,   // ring radius X, as a fraction of viewport width
   ringH:     0.40,   // ring radius Y, as a fraction of viewport height
   angJit:    0.22,   // angular scatter (rad) so the dots aren't evenly spoked
-  dotSize:   7,      // dot radius, px
+  dotSize:   7,      // ring dot radius, px — the SMALL size the dots shrink to as they burst
+  jarDotFrac: 0.08,  // pile dot radius as a fraction of the jar radius — the BIG size while still in the jar (≈ the real marble size). Dots lerp jarDotFrac·R → dotSize over the shrink window
+  shrinkAt:  0.28,   // bt where the big pile dots start shrinking to ring size
+  shrinkLen: 0.24,   // bt span of that shrink
+  addAt:     0.42,   // bt where the missing colours (orange · pink) begin flying in from centre
+  addLen:    0.26,   // bt span over which the missing colours fade + fly to the ring
   linkDist:  0.14,   // longest neighbour thread, as a fraction of min(vw,vh)
   linkMax:   3,      // most threads drawn per dot
   jarGrow:   1.25,   // how much the jar scales up as it reaches centre
@@ -535,26 +539,67 @@ function buildBurst() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
-  const N = Math.max(20, Math.round(BURST.dots));
-  if (!burst || burst.N !== N) {
-    const rand = rng(2718), G = Math.PI * (3 - Math.sqrt(5)), dots = [];
-    for (let i = 0; i < N; i++) {
-      dots.push({
-        col: BURST.colors[i % BURST.colors.length],
-        pileR: Math.sqrt((i + 0.5) / N),   // phyllotaxis disk radius (0..1) — the marble pile
-        pileA: i * G,                       // phyllotaxis angle
-        baseAngle: (i / N) * Math.PI * 2,   // even spread around the ring
-        angJit: (rand() - 0.5) * 2,         // × BURST.angJit
-        radJit: (rand() - 0.5) * 2,         // × BURST.spread
-        phase: rand(),                      // explode stagger
-      });
-    }
-    burst = { canvas, ctx: canvas.getContext('2d'), dots, links: [], dpr, jarRect: null, N,
+  const total = Math.max(20, Math.round(BURST.dots));
+  // the jar's own marble rest-grid drives the pile, so the hand-off from the DOM
+  // jar to the canvas is pixel-identical. jarSig tracks the jar it was built from
+  // so a resize (which rebuilds the jar) re-syncs the pile.
+  const jarSig = (jar && jar.all && jar.all.length) ? jar.S : 0;
+  if (!burst || burst.N !== total || burst.jarSig !== jarSig) {
+    const built = makeBurstDots(total);
+    const N = built.dots.length;
+    burst = { canvas, ctx: canvas.getContext('2d'), dots: built.dots, links: [], dpr,
+              jarRect: null, N, jarSig, pileFrac: built.pileFrac, jarHalf: built.jarHalf,
               px: new Float64Array(N), py: new Float64Array(N) };
   } else {
     burst.canvas = canvas; burst.ctx = canvas.getContext('2d'); burst.dpr = dpr;
   }
   computeBurstLinks();
+}
+
+/* Build the burst dot field. Early dots ARE the jar's marbles 1:1 — same colour
+   and a live reference to the marble, so the pile draws at the marble's ACTUAL
+   settled position (read fresh each frame). The burst is literally the dots you
+   see in the jar starting to move — nothing is regenerated. Extra dots carry the
+   colours the jar never held (orange · pink) and enrich the ring; they start at
+   the centre and fly in mid-burst (Step 3). Ring angles are shuffled so the
+   colours mix all the way round. `pileFrac` is the big (marble-sized) dot radius
+   as a fraction of the jar radius; `jarHalf` is jar.S/2, the units the marble
+   positions are in (both used to map a marble → screen at hand-off). */
+function makeBurstDots(total) {
+  const rand = rng(2718), G = Math.PI * (3 - Math.sqrt(5)), dots = [];
+  const haveJar = jar && jar.all && jar.all.length;
+  let pileFrac = BURST.jarDotFrac, jarHalf = 1;
+  if (haveJar) {
+    const half = jar.S / 2, M = Math.min(jar.all.length, total);
+    for (let k = 0; k < M; k++) {
+      const m = jar.all[k];
+      // marble ref → live position; pnx/pny is a rest-position fallback
+      dots.push({ col: JAR.colors[m.band], early: true, marble: m, pnx: m.rx / half, pny: m.ry / half });
+    }
+    pileFrac = jar.r / half;                        // exact on-screen marble size
+    jarHalf = half;
+  } else {
+    // no jar yet (shouldn't normally happen): fall back to a phyllotaxis pile
+    const E = Math.round(total * 0.6);
+    for (let k = 0; k < E; k++) {
+      const pr = Math.sqrt((k + 0.5) / E) * 0.86, pa = k * G;
+      dots.push({ col: JAR.colors[k % JAR.colors.length], early: true,
+                  pnx: pr * Math.cos(pa), pny: pr * Math.sin(pa) });
+    }
+  }
+  // fill the rest of the ring with the missing colours (orange · pink)
+  const jarCols = new Set(JAR.colors);
+  const extraCols = BURST.colors.filter((c) => !jarCols.has(c));
+  for (let k = 0, K = Math.max(0, total - dots.length); k < K; k++)
+    dots.push({ col: extraCols[k % extraCols.length], early: false, pnx: 0, pny: 0 });
+  // even ring angles, but shuffled so early/extra colours interleave round the ring
+  const order = dots.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  order.forEach((di, pos) => { dots[di].baseAngle = (pos / dots.length) * Math.PI * 2; });
+  for (const d of dots) { d.angJit = (rand() - 0.5) * 2; d.radJit = (rand() - 0.5) * 2; d.phase = rand(); }
+  return { dots, pileFrac, jarHalf };
 }
 
 /* the scroll window (in scene-space f) over which the burst plays */
@@ -595,16 +640,29 @@ function renderBurst(bt) {
   if (glassA > 0.01) drawBurstGlass(ctx, jcx, jcy, jR, glassA);
 
   const pop = BURST.overshoot * Math.min(vw, vh);
+  // fly-in progress for the missing colours (extra dots emerge from centre)
+  const addIn = smooth(clamp((bt - BURST.addAt) / BURST.addLen));
   for (let i = 0; i < dots.length; i++) {
     const d = dots[i];
-    const pr = d.pileR * jR * 0.86;                       // marble's spot in the pile
-    const jx = jcx + Math.cos(d.pileA) * pr, jy = jcy + Math.sin(d.pileA) * pr;
     const r = burstRingXY(d);
-    const e = smoother(clamp((bt - 0.30 - d.phase * 0.06) / 0.34));   // staggered explode
     const dx = r[0] - scx, dy = r[1] - scy, dl = Math.hypot(dx, dy) || 1;
-    const out = Math.sin(Math.PI * e) * pop;              // outward overshoot, peaks mid-flight
-    px[i] = lerp(jx, r[0], e) + (dx / dl) * out;
-    py[i] = lerp(jy, r[1], e) + (dy / dl) * out;
+    if (d.early) {
+      // the marble's ACTUAL on-screen spot (live physics position), so the burst
+      // launches from exactly what's in the jar — no snap to an idealised grid
+      const nx = d.marble ? d.marble.x / burst.jarHalf : d.pnx;
+      const ny = d.marble ? d.marble.y / burst.jarHalf : d.pny;
+      const jx = jcx + nx * jR, jy = jcy + ny * jR;
+      const e = smoother(clamp((bt - 0.30 - d.phase * 0.06) / 0.34));   // staggered explode
+      const out = Math.sin(Math.PI * e) * pop;            // outward overshoot, peaks mid-flight
+      px[i] = lerp(jx, r[0], e) + (dx / dl) * out;
+      py[i] = lerp(jy, r[1], e) + (dy / dl) * out;
+    } else {
+      // extra colours: fly out from the jar centre to their ring slot, mid-burst
+      const e = smoother(clamp((bt - BURST.addAt - d.phase * 0.05) / (BURST.addLen + 0.06)));
+      const out = Math.sin(Math.PI * e) * pop;
+      px[i] = lerp(jcx, r[0], e) + (dx / dl) * out;
+      py[i] = lerp(jcy, r[1], e) + (dy / dl) * out;
+    }
   }
 
   // grey threads stitch on as the ring settles
@@ -620,11 +678,29 @@ function renderBurst(bt) {
     ctx.stroke();
   }
 
-  const ds = BURST.dotSize;
-  for (let i = 0; i < dots.length; i++) {
-    ctx.fillStyle = dots[i].col;
-    ctx.beginPath(); ctx.arc(px[i], py[i], ds, 0, Math.PI * 2); ctx.fill();
+  // dots are marble-sized in the jar and shrink to the small ring size as they burst
+  const shrink = smoother(clamp((bt - BURST.shrinkAt) / BURST.shrinkLen));
+  const ds = lerp(jR * burst.pileFrac, BURST.dotSize, shrink);
+  // a soft drop shadow while they're still packed in the jar, so touching dots
+  // read as separate; it fades out as they shrink and spread apart
+  const sep = 1 - shrink;
+  if (sep > 0.01) {
+    ctx.shadowColor = `rgba(24,32,44,${(0.30 * sep).toFixed(3)})`;
+    ctx.shadowBlur = ds * 0.30;
+    ctx.shadowOffsetX = ds * 0.06;
+    ctx.shadowOffsetY = ds * 0.14;
   }
+  for (let i = 0; i < dots.length; i++) {
+    const d = dots[i];
+    // extra colours fade + scale in as they arrive; jar dots are always solid
+    const a = d.early ? 1 : addIn;
+    if (a <= 0.01) continue;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = d.col;
+    ctx.beginPath(); ctx.arc(px[i], py[i], ds * (d.early ? 1 : a), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 }
 
 /* called every frame from the render loop. Shows/hides the canvas around the
@@ -633,6 +709,9 @@ function renderBurst(bt) {
 function updateBurst(dt, f) {
   if (reduced) return;
   if (!burst) { buildBurst(); if (!burst) return; }
+  // re-sync the pile if the jar has since been (re)built at a new size
+  const jarSig = (jar && jar.all && jar.all.length) ? jar.S : 0;
+  if (burst.jarSig !== jarSig) buildBurst();
   const win = burstWindow();
   if (!win) return;
   const jarEl = document.querySelector('.j-jar');
@@ -3691,7 +3770,7 @@ if (reduced) {
   // buildStep2GUI();             // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
   // buildJourneyGUI();           // Journey: heading position/scale + jar offset/size (toggle with J)
   // buildJarGUI();               // Marble jar: marble size + fill + sound + replay (toggle with M)
-  buildBurstGUI();                // Jar burst → ring: dot count + ring spread + threads (toggle with B) — comment out to ship
+  // buildBurstGUI();             // Jar burst → ring: dot count + ring spread + threads (toggle with B)
 }
 
 /* ── Impact step-2 GUI ────────────────────────────────────────────────
