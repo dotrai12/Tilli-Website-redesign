@@ -117,33 +117,67 @@
   .sch-logo img:not([src]), .sch-logo img[src=""] { display: none; }
   .sch-logo:has(img[src]:not([src=""])) span { display: none; }
 
-  /* ── Impact step 2: recognition — centred hero + scattered photo collage ──
-     A centred heading + awards line above a staggered row of images. Per-tile
-     size and vertical offset live in .g1–.g7; .rec-prod tiles show a product on
-     white (contained) instead of a cover photo. Swap freely by changing src. */
-  .rec-wrap { max-width: 1260px; width: 100%; margin: 0 auto; text-align: center; padding: 0 24px; }
-  .rec-head { font-size: min(46px,5.6vh); font-weight: 800; letter-spacing: -0.03em;
-    line-height: 1.14; color: var(--tl-ink-900); max-width: 860px; margin: 0 auto; }
-  .rec-sub { font-size: min(15px,2vh); font-weight: 600; color: var(--tl-ink-450);
-    letter-spacing: .02em; line-height: 1.7; max-width: 760px; margin: 16px auto 0; }
-  .rec-gallery { display: flex; align-items: center; justify-content: center;
-    gap: 16px; margin-top: min(46px,5vh); }
-  .rec-gallery img { flex: 0 0 auto; border-radius: 18px; object-fit: cover; display: block;
-    background: #fff; box-shadow: 0 20px 44px rgba(40,36,10,.16); }
-  .rec-prod { object-fit: contain !important; padding: 14px; border: 1px solid var(--tl-line-200); }
-  .rec-gallery .g1 { width: 132px; height: 196px; transform: translateY(-26px); }
-  .rec-gallery .g2 { width: 146px; height: 150px; transform: translateY(44px); }
-  .rec-gallery .g3 { width: 158px; height: 226px; transform: translateY(-14px); }
-  .rec-gallery .g4 { width: 220px; height: 300px; transform: translateY(6px); }
-  .rec-gallery .g5 { width: 158px; height: 206px; transform: translateY(-32px); }
-  .rec-gallery .g6 { width: 146px; height: 150px; transform: translateY(38px); }
-  .rec-gallery .g7 { width: 132px; height: 192px; transform: translateY(-18px); }
+  /* ── Impact step 2: full-bleed carousel + stats + a school quote ───────────
+     NO card container. The dot ring (stage-level canvas, behind) fills the top
+     band, a 100vw seamless image marquee sits mid-screen, and stats + quote
+     anchor the bottom. Boxes / fonts / colours match the rest of the site
+     (school tiles · Montserrat · ink + green tokens). Each text group carries
+     its own --x/--y/--sc transform, tuned live in the GUI (press K) then baked
+     into its inline style. ───────────────────────────────────────────────────
+     --imp2-box  box size (px)   --imp2-gap  gap between boxes   --imp2-dur loop time */
+  .imp2-scene { position: absolute; inset: 0; }
+
+  /* seamless auto-scrolling image marquee — equal-size boxes duplicated in the
+     track so translateX(-50%) loops with no seam. Drop a src into any .imp2-box
+     img to swap a placeholder (the label hides itself, like the school tiles). */
+  .imp2-carousel { position: absolute; left: 0; top: 43%; transform: translateY(-50%);
+    width: 100vw; overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
+  .imp2-track { display: flex; gap: calc(var(--imp2-gap, 22px) * var(--imp2-scale, 1)); width: max-content;
+    animation: imp2-marquee var(--imp2-dur, 46s) linear infinite; }
+  .imp2-carousel:hover .imp2-track { animation-play-state: paused; }
+  /* --imp2-scale (GUI, press K) multiplies box size + gap so the whole carousel
+     scales without touching the track's animated transform */
+  .imp2-box { flex: 0 0 auto;
+    width: calc(var(--imp2-box, 200px) * var(--imp2-scale, 1));
+    height: calc(var(--imp2-box, 200px) * var(--imp2-scale, 1));
+    border: 2px solid var(--tl-line-200); border-radius: 16px; background: var(--tl-surface-100);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    color: var(--tl-ink-300); font-size: 14px; font-weight: 700; }
+  .imp2-box img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .imp2-box img:not([src]), .imp2-box img[src=""] { display: none; }
+  .imp2-box:has(img[src]:not([src=""])) span { display: none; }
+  @keyframes imp2-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) { .imp2-track { animation: none; } }
+
+  /* bottom band: stats (left) + quote (right) */
+  .imp2-bottom { position: absolute; left: 50%; bottom: min(9vh, 84px);
+    transform: translateX(-50%); width: 100%; max-width: 1240px;
+    padding: 0 min(56px, 5vw); display: flex; align-items: flex-end;
+    justify-content: space-between; gap: 40px; }
+  /* each text group is independently movable/scalable — baked as inline --x/--y/--sc */
+  .imp2-move { transform: translate(var(--x, 0px), var(--y, 0px)) scale(var(--sc, 1)); }
+  .imp2-stats { display: flex; align-items: flex-end; gap: min(56px, 6vw); }
+  .imp2-stat { transform-origin: left bottom; }
+  .imp2-num { font-size: min(44px, 5vh); font-weight: 800; letter-spacing: -0.02em;
+    color: var(--tl-ink-900); line-height: 1; }
+  .imp2-lbl { font-size: 15px; font-weight: 600; color: var(--tl-ink-450);
+    margin-top: 10px; line-height: 1.3; }
+  .imp2-quote { display: grid; grid-template-columns: auto 1fr; column-gap: 14px;
+    max-width: 470px; margin: 0; transform-origin: right bottom; }
+  .imp2-qmark { grid-row: 1; grid-column: 1; font-size: 46px; font-weight: 800;
+    color: var(--tl-green-600); line-height: .9; }
+  .imp2-qtext { grid-row: 1; grid-column: 2; font-size: min(23px, 2.9vh); font-weight: 700;
+    letter-spacing: -0.01em; line-height: 1.3; color: var(--tl-ink-800); }
+  .imp2-cite { grid-row: 2; grid-column: 2; font-size: 14px; font-weight: 600;
+    color: var(--tl-ink-450); margin-top: 12px; line-height: 1.4; }
 
   @media (max-width: 760px) {
     .sch-panel { flex-direction: column; text-align: center; gap: 28px; padding: 32px 26px; }
     .sch-copy { flex-basis: auto; }
-    .rec-gallery { flex-wrap: wrap; }
-    .rec-gallery img { transform: none !important; }
+    .imp2-box { --imp2-box: 150px; }
+    .imp2-bottom { flex-direction: column; align-items: flex-start; gap: 22px; bottom: 5vh; }
   }
 
   /* ── Shared ───────────────────────────────────────────────── */
@@ -688,13 +722,14 @@
 <!-- ═══ 10 · IMPACT ═══════════════════════════════════════════ -->
 <div class="scene" data-scene data-wash="255,255,255" data-label="Impact" id="impact" style="height: 230vh;">
   <div class="stage">
+    <!-- 3D orbiting dot ring — a STAGE-level full-bleed layer (sibling of BOTH
+         steps) so the same ring persists across step 1 → step 2. Its screen-Y
+         (cfg.offY) is animated up in main.js as you leave "30+ schools", so the
+         ring glides to the top of the carousel card — that rise IS the
+         transition. Depth + motion live in js/impact-orbits.js. -->
+    <canvas id="impactOrbits" style="position:absolute; inset:0; width:100%; height:100%;
+            z-index:0; pointer-events:none;"></canvas>
     <div class="step">
-      <!-- 3D orbiting dot ring — its OWN full-bleed layer (sibling of the card),
-           so the ring can spill past the card edges without being clipped. Sits
-           behind the card content, which is lifted to z-index:1. Perspective/
-           depth + all motion live in js/impact-orbits.js. -->
-      <canvas id="impactOrbits" style="position:absolute; inset:0; width:100%; height:100%;
-              z-index:0; pointer-events:none;"></canvas>
       <div class="step-in" style="position:relative; z-index:1;">
         <div id="impactCard" style="width: 100%; margin: 0 auto; text-align: center; position: relative;">
           <!-- image-1 layout: heading block (left) + 3×3 school-logo grid (right),
@@ -723,22 +758,38 @@
       </div>
     </div>
     <div class="step">
-      <div class="step-in">
-        <!-- image-2 layout: centred hero heading + awards line above a staggered
-             photo collage. Tile size/offset are in .g1–.g7; .rec-prod = product
-             on white. Swap any src to change an image. -->
-        <div class="rec-wrap">
-          <h2 class="rec-head rv">Recognised by the people <span style="color: var(--tl-green-600);">reimagining education</span>.</h2>
-          <p class="rec-sub rv">HundrED Global Collection 2026&nbsp;&nbsp;·&nbsp;&nbsp;QS Reimagine Education Gold Winner&nbsp;&nbsp;·&nbsp;&nbsp;GESAwards Special Track Winner&nbsp;&nbsp;·&nbsp;&nbsp;UNICEF Venture Fund</p>
-          <div class="rec-gallery rv">
-            <img class="g1" src="assets/ds/classroom-training-2.jpeg" alt="Teachers in a Tilli training">
-            <img class="g2" src="assets/ds/feelings-time-1.png" alt="Tilli Feelings Time activity">
-            <img class="g3" src="assets/ds/stanford-campus.jpeg" alt="Stanford campus">
-            <img class="g4" src="assets/ds/classroom-training-1.jpeg" alt="Children in a Tilli classroom">
-            <img class="g5 rec-prod" src="assets/ds/teaching-kit.png" alt="Tilli SEL Teaching Kit">
-            <img class="g6 rec-prod" src="assets/ds/my-first-feelings-book.png" alt="Tilli My First Feelings Book">
-            <img class="g7 rec-prod" src="assets/ds/guidebook-l1.png" alt="Tilli Guidebook Level 1">
+      <!-- full-bleed: the dot ring (canvas above) fills the top band, a 100vw
+           seamless image marquee sits mid-screen, stats + quote anchor the
+           bottom. Boxes are placeholders — paste a path into any .imp2-box
+           <img src=""> and the label hides itself. The track is DUPLICATED
+           (10 = 5×2) so the -50% loop is seamless; keep both halves identical.
+           Each text group's --x/--y/--sc is tuned in the GUI (press K). -->
+      <div class="imp2-scene">
+        <div class="imp2-carousel rv" style="--imp2-scale:1.35;">
+          <div class="imp2-track">
+            <div class="imp2-box"><img src="" alt="Carousel image 1"><span>image 1</span></div>
+            <div class="imp2-box"><img src="" alt="Carousel image 2"><span>image 2</span></div>
+            <div class="imp2-box"><img src="" alt="Carousel image 3"><span>image 3</span></div>
+            <div class="imp2-box"><img src="" alt="Carousel image 4"><span>image 4</span></div>
+            <div class="imp2-box"><img src="" alt="Carousel image 5"><span>image 5</span></div>
+            <!-- duplicate of the five above, for the seamless loop -->
+            <div class="imp2-box"><img src="" alt=""><span>image 1</span></div>
+            <div class="imp2-box"><img src="" alt=""><span>image 2</span></div>
+            <div class="imp2-box"><img src="" alt=""><span>image 3</span></div>
+            <div class="imp2-box"><img src="" alt=""><span>image 4</span></div>
+            <div class="imp2-box"><img src="" alt=""><span>image 5</span></div>
           </div>
+        </div>
+        <div class="imp2-bottom">
+          <div class="imp2-stats">
+            <div class="imp2-stat imp2-move rv" style="--x:-85px; --y:0px; --sc:1.4;"><div class="imp2-num">12,510</div><div class="imp2-lbl">Students<br>understood</div></div>
+            <div class="imp2-stat imp2-move rv" style="--x:0px; --y:0px; --sc:1.4;"><div class="imp2-num">4,541</div><div class="imp2-lbl">Educators<br>trained</div></div>
+          </div>
+          <blockquote class="imp2-quote imp2-move rv" style="--x:264px; --y:0px; --sc:1.65;">
+            <span class="imp2-qmark">&ldquo;</span>
+            <p class="imp2-qtext">Every morning the children ask their teachers: are we doing a Tilli activity today?</p>
+            <footer class="imp2-cite">Mr. Upali Gunasekara, Principal,<br>Polymath International School</footer>
+          </blockquote>
         </div>
       </div>
     </div>
@@ -878,6 +929,6 @@
 <script src="js/ask-tilli-demo.js?v=1"></script>
 <script src="js/impact-orbits.js?v=6"></script>
 <script src="js/impact-carousel.js?v=7"></script>
-<script type="module" src="js/main.js?v=112"></script>
+<script type="module" src="js/main.js?v=116"></script>
 </body>
 </html>

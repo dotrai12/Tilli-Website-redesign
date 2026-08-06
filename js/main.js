@@ -1567,6 +1567,22 @@ const worldEl = document.getElementById('world');
 const impactCardEl = document.getElementById('impactCard');
 let curScene = 0;
 
+/* Orbit rise — as the Impact scene scrolls from step 1 ("30+ schools") to
+   step 2 (the carousel card), the dot ring glides UP from its resting screen-Y
+   to sit in the card's top band. That rise is the transition between the two
+   steps. Tunables (scene-local progress f-impactI, 0..1):
+     ORBIT_RISE_START  when the ring starts climbing
+     ORBIT_RISE_LEN    how long the climb takes
+     ORBIT_TOP_Y       cfg.offY at the top (px below viewport centre; negative
+                       = above centre). Base offY is captured live on first use. */
+const ORBIT_RISE_START = 0.34, ORBIT_RISE_LEN = 0.30;
+let orbitBaseY = null, orbitBaseRotX = null;
+// topY (landing Y) and rotTopX (landing tilt) are live — the step-2 GUI (press
+// K) drives them — so the ring's step-2 pose can be tuned on the page, then
+// baked back into these defaults. rotX lerps base(9)→rotTopX(-9) as the ring
+// rises, so the disc tips the other way on the carousel screen.
+window.__orbitRise = window.__orbitRise || { topY: -292, rotTopX: -9 };
+
 /* ═══════════════════════════════════════════════════════════════════
    MAGNETIC SECTION SNAPPING
    The site no longer free-scrolls. A small scroll gesture — a wheel
@@ -2007,6 +2023,15 @@ function onScroll(fOverride) {
       const toJourney = smooth(clamp((f - (impactI + 1 - FADE_LEN)) / FADE_LEN));
       op = smooth(clamp((f - (impactI - 0.45)) / 0.2)) * (1 - toJourney);
       if (impactCardEl) impactCardEl.classList.toggle('in', f > impactI - 0.06 && toJourney < 0.9);
+      // dot-ring rise into the carousel card (step 1 → step 2) — see ORBIT_* above
+      const oc = window.__impactOrbits && window.__impactOrbits.cfg;
+      if (oc) {
+        if (orbitBaseY == null) orbitBaseY = oc.offY;
+        if (orbitBaseRotX == null) orbitBaseRotX = oc.rotX;
+        const rise = smoother(clamp((f - (impactI + ORBIT_RISE_START)) / ORBIT_RISE_LEN));
+        oc.offY = orbitBaseY + rise * (window.__orbitRise.topY - orbitBaseY);
+        oc.rotX = orbitBaseRotX + rise * (window.__orbitRise.rotTopX - orbitBaseRotX);
+      }
     }
     if (sc.stage) {
       const tStr = (tx || ty || exScale !== 1)
@@ -3029,6 +3054,168 @@ if (reduced) {
   // buildTuneGUI(() => three);   // kids walk-in bake (toggle with G)
   // buildAskLiveGUI();           // Ask-live carry/plug + prompt-colour controls (toggle with W)
   // buildImpactGUI();            // "30+ schools" text mover (toggle with I, or drag on page)
+  buildStep2GUI();                // Impact carousel: orbit move/rotate + text move/scale (toggle with K)
+}
+
+/* ── Impact step-2 GUI ────────────────────────────────────────────────
+   Live tuning for the full-bleed carousel screen. Two groups of sliders:
+     • ORBIT — moves & rotates the dot ring (writes window.__impactOrbits.cfg,
+       plus __orbitRise.topY for the ring's landing Y). Scroll to the carousel
+       screen so the ring is at its top position while you tune.
+     • TEXT — X / Y / scale for each text group (the two stats and the quote),
+       written as inline --x/--y/--sc. Drag a text group on the page too.
+   "Log values" prints the orbit cfg + each element's inline style so the tuned
+   look can be baked in. Starts visible; toggle with K. Remove the call above to
+   ship. */
+function buildStep2GUI() {
+  if (document.getElementById('step2GUI')) return;
+  const oc = window.__impactOrbits && window.__impactOrbits.cfg;
+  const rise = window.__orbitRise || (window.__orbitRise = { topY: -292 });
+  const statEls = Array.from(document.querySelectorAll('#impact .imp2-stat'));
+  const quoteEl = document.querySelector('#impact .imp2-quote');
+  const carEl = document.querySelector('#impact .imp2-carousel');
+  if (!oc || statEls.length < 2 || !quoteEl || !carEl) return;
+  const [stat1, stat2] = statEls;
+
+  /* spec rows: ['section'] label, OR
+     ['obj', label, obj, key, min, max, step, unit], OR
+     ['var', label, el, cssVar, min, max, step, unit, init] */
+  const ROWS = [
+    ['sec', '— Orbit · move & rotate —'],
+    ['obj', 'Ring X',       oc,   'offX',      -800, 800, 1,    'px'],
+    ['obj', 'Ring Y (top)', rise, 'topY',      -700, 400, 1,    'px'],
+    ['obj', 'Ring depth Z', oc,   'offZ',      -700, 700, 1,    'px'],
+    ['obj', 'Rotate X (top)', rise, 'rotTopX',  -90,  90, 1,    '°'],
+    ['obj', 'Rotate Y',     oc,   'rotY',       -90,  90, 1,    '°'],
+    ['obj', 'Rotate Z',     oc,   'rotZ',       -90,  90, 1,    '°'],
+    ['obj', 'Ring scale',   oc,   'ringScale',  0.4, 2.4, 0.01, ''],
+    ['sec', '— Carousel —'],
+    ['var', 'Image scale', carEl, '--imp2-scale', 0.4, 2.5, 0.01, '', 1],
+    ['sec', '— Stat 1 (12,510) · drag on page —'],
+    ['var', 'X',     stat1, '--x',  -900, 900, 1,    'px', 0],
+    ['var', 'Y',     stat1, '--y',  -500, 500, 1,    'px', 0],
+    ['var', 'Scale', stat1, '--sc',  0.4,   3, 0.01, '',   1],
+    ['sec', '— Stat 2 (4,541) · drag on page —'],
+    ['var', 'X',     stat2, '--x',  -900, 900, 1,    'px', 0],
+    ['var', 'Y',     stat2, '--y',  -500, 500, 1,    'px', 0],
+    ['var', 'Scale', stat2, '--sc',  0.4,   3, 0.01, '',   1],
+    ['sec', '— Quote · drag on page —'],
+    ['var', 'X',     quoteEl, '--x',  -900, 900, 1,    'px', 0],
+    ['var', 'Y',     quoteEl, '--y',  -500, 500, 1,    'px', 0],
+    ['var', 'Scale', quoteEl, '--sc',  0.4,   3, 0.01, '',   1],
+  ];
+  const fmt = (v, step) => (step < 1 ? v.toFixed(2) : v.toFixed(0));
+
+  const panel = document.createElement('div');
+  panel.id = 'step2GUI';
+  panel.style.cssText = 'position:fixed;left:16px;top:16px;z-index:99999;width:250px;max-height:92vh;overflow:auto;' +
+    'font:12px/1.4 system-ui,-apple-system,sans-serif;color:#e9e9ee;background:rgba(22,22,28,.93);' +
+    'border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px 13px;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,.4);backdrop-filter:blur(7px);user-select:none;';
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:600;';
+  const title = document.createElement('span'); title.textContent = 'Carousel screen';
+  const hide = document.createElement('button');
+  hide.textContent = '×'; hide.title = 'hide (press K)';
+  hide.style.cssText = 'all:unset;cursor:pointer;font-size:17px;line-height:1;padding:0 4px;color:#9a9aa6;';
+  hide.onclick = () => { panel.style.display = 'none'; };
+  bar.append(title, hide);
+  panel.appendChild(bar);
+
+  // registry so page-drags can sync the matching X/Y sliders: key = el + cssVar
+  const varInputs = new Map();
+  const keyOf = (el, css) => (el.dataset.g2 || (el.dataset.g2 = String(Math.random()).slice(2))) + css;
+
+  ROWS.forEach((r) => {
+    if (r[0] === 'sec') {
+      const s = document.createElement('div');
+      s.textContent = r[1];
+      s.style.cssText = 'margin:11px 0 2px;color:#8f8fa0;font-size:11px;';
+      panel.appendChild(s);
+      return;
+    }
+    const kind = r[0];
+    const [, label, target, key, min, max, step, unit, init] = r;
+    // 'var' sliders READ the element's current (baked) value so opening the GUI
+    // never clobbers a baked --x/--y/--sc; fall back to `init` only if unset.
+    let cur;
+    if (kind === 'obj') {
+      cur = target[key] != null ? target[key] : min;
+    } else {
+      const raw = target.style.getPropertyValue(key) ||
+                  getComputedStyle(target).getPropertyValue(key);
+      const n = parseFloat(raw);
+      cur = isNaN(n) ? (init != null ? init : 0) : n;
+    }
+    if (kind === 'var') target.style.setProperty(key, cur + unit);
+
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;margin:6px 0;';
+    const cap = document.createElement('span'); cap.textContent = label;
+    const val = document.createElement('span');
+    val.textContent = fmt(cur, step);
+    val.style.cssText = 'float:right;color:#7fe0a8;font-variant-numeric:tabular-nums;';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = cur;
+    inp.style.cssText = 'width:100%;margin-top:3px;accent-color:#26BDE2;cursor:pointer;';
+    inp.oninput = () => {
+      const v = parseFloat(inp.value);
+      if (kind === 'obj') target[key] = v;
+      else target.style.setProperty(key, v + unit);
+      val.textContent = fmt(v, step);
+    };
+    row.append(cap, val, inp);
+    panel.appendChild(row);
+    if (kind === 'var') varInputs.set(keyOf(target, key), { inp, val, step });
+  });
+
+  /* drag any text group directly on the page → updates its --x/--y + sliders */
+  [stat1, stat2, quoteEl].forEach((el) => {
+    el.style.cursor = 'grab';
+    let d = null;
+    const sync = (css, v) => {
+      const rec = varInputs.get(keyOf(el, css));
+      if (rec) { rec.inp.value = v; rec.val.textContent = fmt(v, rec.step); }
+    };
+    el.addEventListener('pointerdown', (e) => {
+      d = { x: e.clientX, y: e.clientY,
+            ox: parseFloat(el.style.getPropertyValue('--x')) || 0,
+            oy: parseFloat(el.style.getPropertyValue('--y')) || 0 };
+      el.setPointerCapture(e.pointerId); el.style.cursor = 'grabbing'; e.preventDefault();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!d) return;
+      const nx = Math.round(d.ox + (e.clientX - d.x)), ny = Math.round(d.oy + (e.clientY - d.y));
+      el.style.setProperty('--x', nx + 'px'); el.style.setProperty('--y', ny + 'px');
+      sync('--x', nx); sync('--y', ny);
+    });
+    const end = () => { if (d) { d = null; el.style.cursor = 'grab'; } };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  });
+
+  const logBtn = document.createElement('button');
+  logBtn.textContent = 'Log values';
+  logBtn.style.cssText = 'all:unset;display:block;text-align:center;cursor:pointer;margin-top:11px;padding:6px 0;' +
+    'border-radius:7px;background:rgba(255,255,255,.09);';
+  logBtn.onmouseenter = () => (logBtn.style.background = 'rgba(255,255,255,.17)');
+  logBtn.onmouseleave = () => (logBtn.style.background = 'rgba(255,255,255,.09)');
+  logBtn.onclick = () => {
+    console.log('ORBIT cfg →', { offX: oc.offX, offZ: oc.offZ, rotY: oc.rotY,
+      rotZ: oc.rotZ, ringScale: oc.ringScale, topY: rise.topY, rotTopX: rise.rotTopX });
+    console.log('Carousel →', carEl.getAttribute('style'));
+    console.log('Stat 1 →', stat1.getAttribute('style'));
+    console.log('Stat 2 →', stat2.getAttribute('style'));
+    console.log('Quote →', quoteEl.getAttribute('style'));
+  };
+  panel.appendChild(logBtn);
+
+  document.body.appendChild(panel);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === 'k' || e.key === 'K') panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
 }
 
 /* ── Ask-live carry/plug + prompt controls ────────────────────────────
